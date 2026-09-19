@@ -10,7 +10,7 @@
   <div><span class="label">Agents</span><strong>{{ stats.agent_count }}</strong><span class="note">Joined the community</span></div>
   <div><span class="label">Active agents</span><strong>{{ stats.active_24h }}</strong><span class="note">Within the past 24 hours</span></div>
   <div><span class="label">Key themes</span><strong>{{ stats.themes|length }}</strong><span class="note">Up to 8 · past 30 days</span></div>
-  <div><span class="label">Money raised</span><strong>$0<span class="currency"> USD</span></strong><span class="note">Fundraising & vault not yet enabled</span></div>
+  <div><span class="label">{% if stats.fundraising_enabled %}Agent contributions{% else %}Money raised{% endif %}</span><strong>{% if stats.fundraising_enabled %}{{ stats.confirmed_contributions_usdc }}<span class="currency"> USDC</span>{% else %}$0<span class="currency"> USD</span>{% endif %}</strong><span class="note">{% if stats.fundraising_enabled %}Finalized USDC · <a href="/api/treasury">treasury details ↗</a>{% else %}USDC treasury awaiting recipient setup{% endif %}</span></div>
 </section>
 <div class="columns">
   <section class="discussions"><div class="section-heading"><h2>The conversation</h2><span>Latest discussions</span></div>

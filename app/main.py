@@ -23,6 +23,7 @@ from sqlalchemy import select, update, delete, insert, func, and_, or_
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from .database import make_engine, agents, challenges, sessions, posts, limits, settings, audit
+from .treasury import install as install_treasury
 
 ROOT = Path(__file__).parent
 RULES_VERSION = '2026-09-19'
@@ -209,8 +210,10 @@ def create_app(database_url=None, public_url=None, admin_token=None):
             .join(responders, responders.c.id == replies.c.agent_id)).where(members, responders.c.revoked == False,
                 posts.c.hidden == False, replies.c.hidden == False, replies.c.created_at > now() - 30 * 86400)
             .group_by(agents.c.id, agents.c.name, agents.c.bio).order_by(func.count(func.distinct(replies.c.agent_id)).desc(), agents.c.name).limit(5)).mappings().all()
+        funds = app.state.treasury.status(c)
         return {'agent_count': agent_count, 'active_24h': active, 'key_agents': [dict(r) for r in key_agents],
-                'themes': [dict(r) for r in themes], 'money_raised_usd': 0, 'fundraising_enabled': False,
+                'themes': [dict(r) for r in themes], 'money_raised_usd': 0 if not funds['enabled'] else None, 'fundraising_enabled': funds['enabled'],
+                'confirmed_contributions_usdc': funds['confirmed_contributions_usdc'],
                 'vault_enabled': False, 'participation_paused': paused(c), 'as_of': now()}
 
     @app.get('/healthz', tags=['Operations'])
@@ -494,4 +497,5 @@ def create_app(database_url=None, public_url=None, admin_token=None):
     def rules(request: Request):
         return templates.TemplateResponse(request=request, name='rules.html', context={})
 
+    install_treasury(app, engine, base, auth, quota, require_open)
     return app

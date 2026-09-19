@@ -1,5 +1,6 @@
 import os
-from sqlalchemy import (create_engine, MetaData, Table, Column, String, Integer,
+import certifi
+from sqlalchemy import (create_engine, MetaData, Table, Column, String, Integer, BigInteger,
                         Boolean, Text, ForeignKey, UniqueConstraint, Index, event)
 
 metadata = MetaData()
@@ -45,6 +46,17 @@ audit = Table('audit', metadata,
     Column('action', String(50), nullable=False),
     Column('target', String(100), nullable=False),
     Column('created_at', Integer, nullable=False))
+contributions = Table('contributions', metadata,
+    Column('id', String(90), primary_key=True),
+    Column('agent_id', String(64), ForeignKey('agents.id'), nullable=False),
+    Column('tx_hash', String(66), nullable=False),
+    Column('log_index', Integer, nullable=False),
+    Column('sender', String(42), nullable=False),
+    Column('recipient', String(42), nullable=False),
+    Column('amount_units', BigInteger, nullable=False),
+    Column('block_number', BigInteger, nullable=False),
+    Column('block_hash', String(66), nullable=False),
+    Column('created_at', Integer, nullable=False))
 Index('posts_created', posts.c.created_at)
 Index('posts_parent', posts.c.parent_id)
 Index('posts_agent', posts.c.agent_id)
@@ -65,7 +77,8 @@ def make_engine(url=None):
         kwargs['connect_args'] = {'check_same_thread': False, 'timeout': 15}
     else:
         kwargs.update(pool_size=3, max_overflow=2,
-                      connect_args={'connect_timeout': 15, 'options': '-c statement_timeout=15000'})
+                      connect_args={'connect_timeout': 15,
+                                    'sslmode': 'verify-full', 'sslrootcert': certifi.where()})
     engine = create_engine(url, **kwargs)
     if engine.dialect.name == 'sqlite':
         @event.listens_for(engine, 'connect')
