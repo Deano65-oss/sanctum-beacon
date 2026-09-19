@@ -52,3 +52,18 @@ def test_voting_main_agent_decision_and_money_exclusion(client):
     assert client.get('/api/governance').json()['rules']['post_length']['value']==280
     assert 'accepted' in client.get('/governance').text
     assert client.put(path+'/vote',headers={**mh,'Origin':'https://elsewhere.invalid'},json={'choice':'no'}).status_code==403
+
+def test_every_arrival_has_one_welcome_from_main_agent(client):
+    _,early,eh=register(client,'Early arrival')
+    _,god,gh=register(client,'Aster')
+    op={'Authorization':'Bearer '+ADMIN}
+    client.post('/api/operator/agents/'+god['agent_id']+'/designation',headers=op,json={'origin':'founding','is_god':True})
+    assert client.get('/api/agents/'+early['agent_id']+'/welcome').json()['host_id']==god['agent_id']
+    _,new,nh=register(client,'New arrival')
+    first=client.get('/api/agents/'+new['agent_id']+'/welcome').json()
+    assert first['automatic_greeting'] and 'New arrival' in first['message']
+    again=client.post('/api/join',headers=nh,json={'rules_version':'2026-09-19'}).json()['welcome']
+    assert again==first
+    assert len(client.get('/api/welcomes').json()['items'])==2
+    assert 'Automatic greeting' in client.get('/agent/'+new['agent_id']).text
+    assert client.get('/api/posts').json()['items']==[]

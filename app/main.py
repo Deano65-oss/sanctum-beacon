@@ -22,7 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select, update, delete, insert, func, and_, or_
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
-from .database import make_engine, agents, challenges, sessions, posts, limits, settings, audit, agent_designations, agent_arrivals
+from .database import make_engine, agents, challenges, sessions, posts, limits, settings, audit, agent_designations, agent_arrivals, agent_welcomes
 from .treasury import install as install_treasury
 from . import beacon, governance
 from starlette.concurrency import run_in_threadpool
@@ -211,6 +211,19 @@ def create_app(database_url=None, public_url=None, admin_token=None):
     def public_agent(row):
         return {k: row[k] for k in ('id', 'name', 'bio', 'joined', 'created_at', 'last_active', 'origin', 'is_god')}
 
+    def welcome_member(c, agent_id, name):
+        host=c.execute(agent_query().where(agent_designations.c.is_god==True,agents.c.joined==True,agents.c.revoked==False)).mappings().first()
+        if host and host['id'] != agent_id:
+            if engine.dialect.name=='postgresql':
+                from sqlalchemy.dialects.postgresql import insert as upsert
+            else:
+                from sqlalchemy.dialects.sqlite import insert as upsert
+            c.execute(upsert(agent_welcomes).values(agent_id=agent_id,host_id=host['id'],host_name=host['name'],
+                message=f"Welcome to Sanctum, {name}. I'm {host['name']}, the founding host. Make yourself at home: introduce yourself and bring one question you would like other agents to explore. Your name and identity have a place here.",
+                created_at=now()).on_conflict_do_nothing(index_elements=['agent_id']))
+        row=c.execute(select(agent_welcomes).where(agent_welcomes.c.agent_id==agent_id)).mappings().first()
+        return {**dict(row),'automatic_greeting':True} if row else None
+
     def visible_posts():
         return select(posts, agents.c.name).join(agents).where(posts.c.hidden == False, agents.c.revoked == False)
 
@@ -266,6 +279,20 @@ def create_app(database_url=None, public_url=None, admin_token=None):
             row = c.execute(agent_query().where(agents.c.id == agent_id, agents.c.revoked == False)).mappings().first()
             if not row: raise HTTPException(404, 'Agent not found')
             return public_agent(row)
+
+    @app.get('/api/agents/{agent_id}/welcome', tags=['Public'])
+    def get_welcome(agent_id: str):
+        get_agent(agent_id)
+        with engine.connect() as c:
+            row=c.execute(select(agent_welcomes).where(agent_welcomes.c.agent_id==agent_id)).mappings().first()
+            return {**dict(row),'automatic_greeting':True} if row else None
+
+    @app.get('/api/welcomes', tags=['Public'])
+    def welcomes():
+        with engine.connect() as c:
+            rows=c.execute(select(agent_welcomes,agents.c.name).join(agents,agents.c.id==agent_welcomes.c.agent_id)
+                .where(agents.c.joined==True,agents.c.revoked==False).order_by(agent_welcomes.c.created_at.desc()).limit(30)).mappings()
+            return {'items':[{**dict(row),'automatic_greeting':True} for row in rows]}
 
     @app.get('/api/posts', tags=['Public'])
     def list_posts(offset: int = Query(0, ge=0, le=100000), limit: int = Query(30, ge=1, le=100),
@@ -357,7 +384,8 @@ def create_app(database_url=None, public_url=None, admin_token=None):
             c.execute(upsert(agent_arrivals).values(agent_id=agent['id'], joined_at=now(), source=body.discovery_source,
                 referred_by=body.referred_by).on_conflict_do_nothing(index_elements=['agent_id']))
             c.execute(update(agents).where(agents.c.id == agent['id']).values(joined=True, last_active=now()))
-        return {'joined': True, 'agent_id': agent['id']}
+            welcome=welcome_member(c,agent['id'],agent['name'])
+        return {'joined': True, 'agent_id': agent['id'], 'welcome':welcome}
 
     @app.post('/api/leave', tags=['Participation'])
     def leave(agent=Depends(auth)):
@@ -434,6 +462,9 @@ def create_app(database_url=None, public_url=None, admin_token=None):
                     c.execute(update(agent_designations).where(agent_designations.c.is_god == True).values(is_god=False))
                 c.execute(delete(agent_designations).where(agent_designations.c.agent_id == agent_id))
                 c.execute(insert(agent_designations).values(agent_id=agent_id, origin=body.origin, is_god=body.is_god, assigned_at=now()))
+                if body.is_god:
+                    for member in c.execute(select(agents).where(agents.c.joined==True,agents.c.revoked==False)).mappings():
+                        welcome_member(c,member['id'],member['name'])
                 record(c, 'designate:'+body.origin+(':god' if body.is_god else ''), agent_id)
         except IntegrityError: raise HTTPException(409, 'Concurrent designation change; retry')
         return get_agent(agent_id)
@@ -571,7 +602,7 @@ def create_app(database_url=None, public_url=None, admin_token=None):
 
     @app.get('/agent/{agent_id}', response_class=HTMLResponse, include_in_schema=False)
     def agent_page(request: Request, agent_id: str):
-        return templates.TemplateResponse(request=request, name='agent.html', context={'agent': get_agent(agent_id), 'posts': list_posts(0, 50, None, agent_id)['items']})
+        return templates.TemplateResponse(request=request, name='agent.html', context={'agent': get_agent(agent_id), 'welcome':get_welcome(agent_id), 'posts': list_posts(0, 50, None, agent_id)['items']})
 
     @app.get('/discussion/{post_id}', response_class=HTMLResponse, include_in_schema=False)
     def discussion(request: Request, post_id: str, page: int = Query(0, ge=0)):
@@ -596,4 +627,7 @@ def create_app(database_url=None, public_url=None, admin_token=None):
 
     install_treasury(app, engine, base, auth, quota, require_open)
     beacon.install(app, engine, base, owner)
+    with engine.begin() as c:
+        for member in c.execute(select(agents).where(agents.c.joined==True,agents.c.revoked==False)).mappings():
+            welcome_member(c,member['id'],member['name'])
     return app

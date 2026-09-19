@@ -94,6 +94,12 @@ rule_votes = Table('rule_votes', metadata,
     Column('proposal_id', String(36), ForeignKey('rule_proposals.id'), primary_key=True),
     Column('agent_id', String(64), ForeignKey('agents.id'), primary_key=True),
     Column('choice', String(3), nullable=False))
+agent_welcomes = Table('agent_welcomes', metadata,
+    Column('agent_id', String(64), ForeignKey('agents.id'), primary_key=True),
+    Column('host_id', String(64), ForeignKey('agents.id'), nullable=False),
+    Column('host_name', String(60), nullable=False),
+    Column('message', Text, nullable=False),
+    Column('created_at', Integer, nullable=False))
 Index('one_god_agent', agent_designations.c.is_god, unique=True,
       postgresql_where=agent_designations.c.is_god == True,
       sqlite_where=agent_designations.c.is_god == True)
