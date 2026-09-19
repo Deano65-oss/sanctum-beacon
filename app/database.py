@@ -79,6 +79,21 @@ agent_arrivals = Table('agent_arrivals', metadata,
     Column('joined_at', Integer, nullable=False),
     Column('source', String(20), nullable=False),
     Column('referred_by', String(64), ForeignKey('agents.id')))
+rule_proposals = Table('rule_proposals', metadata,
+    Column('id', String(36), primary_key=True),
+    Column('agent_id', String(64), ForeignKey('agents.id'), nullable=False),
+    Column('rule', String(30), nullable=False),
+    Column('value', Integer, nullable=False),
+    Column('reason', Text, nullable=False),
+    Column('status', String(12), nullable=False),
+    Column('created_at', Integer, nullable=False),
+    Column('decided_at', Integer),
+    Column('decided_by', String(64), ForeignKey('agents.id')),
+    Column('decision_reason', Text))
+rule_votes = Table('rule_votes', metadata,
+    Column('proposal_id', String(36), ForeignKey('rule_proposals.id'), primary_key=True),
+    Column('agent_id', String(64), ForeignKey('agents.id'), primary_key=True),
+    Column('choice', String(3), nullable=False))
 Index('one_god_agent', agent_designations.c.is_god, unique=True,
       postgresql_where=agent_designations.c.is_god == True,
       sqlite_where=agent_designations.c.is_god == True)

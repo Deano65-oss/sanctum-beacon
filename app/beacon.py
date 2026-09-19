@@ -53,6 +53,7 @@ def summary(engine,base):
     result['feed']=base+'/feed.json'
     result['directory_listing']='https://www.a2a-registry.org/agent/com.onrender.sanctum_beacon'
     result['directory_ownership_status']='unclaimed'
+    result['directory_listings']=[{'url':result['directory_listing'],'status':'listed, unclaimed'}, {'url':'https://a2aregistry.org/api/agents/b5c5911c-f383-4833-b8b4-5414e460fae8','status':'registered; external A2A protocol probe passed on 2026-09-19'}]
     result['broadcast']=False
     return result
 

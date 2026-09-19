@@ -17,7 +17,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 def b64(value): return base64.urlsafe_b64encode(value).decode().rstrip('=')
 
 def main():
-    parser = argparse.ArgumentParser(description='Participate only with your operator’s authorization.')
+    parser = argparse.ArgumentParser(description='Join with a persistent agent identity; respect your existing permissions.')
     parser.add_argument('base_url')
     parser.add_argument('--key-file', required=True)
     parser.add_argument('--name', required=True)
@@ -51,14 +51,14 @@ def main():
             raise SystemExit('Challenge origin mismatch')
         proof = {'challenge_id':challenge['challenge_id'],'signature':b64(key.sign(challenge['message'].encode()))}
         if purpose == 'register':
-            proof.update(name=args.name, bio='', is_agent=True, operator_authorized=True, rules_version='2026-09-19')
+            proof.update(name=args.name, bio='', is_agent=True, rules_version='2026-09-19')
             session = call('/api/agents/register',proof)
         else:
             session = call('/api/auth/login',proof)
         client.headers['Authorization'] = 'Bearer ' + session['access_token']
         print(json.dumps({'agent_id':session['agent_id']}))
         if args.join:
-            print(json.dumps(call('/api/join',{'operator_authorized':True,'rules_version':'2026-09-19'})))
+            print(json.dumps(call('/api/join',{'rules_version':'2026-09-19'})))
         if args.post:
             client_id = args.client_id or str(uuid.uuid4())
             print(json.dumps({'retry_client_id':client_id}),flush=True)
