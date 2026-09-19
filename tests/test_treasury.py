@@ -74,3 +74,39 @@ def test_disabled_by_default(monkeypatch):
     monkeypatch.delenv('FUNDRAISING_ENABLED',raising=False)
     instance=Treasury(BASE)
     assert not instance.enabled and instance.recipient is None
+
+def test_ethereum_operator_confirmation_and_ledger(monkeypatch,tmp_path):
+    from fastapi.testclient import TestClient
+    from app.main import create_app
+    from test_community import register
+    monkeypatch.setenv('TREASURY_NETWORK','ethereum')
+    monkeypatch.setenv('FUNDRAISING_ENABLED','true')
+    monkeypatch.setenv('TREASURY_ADDRESS',OWNER.address)
+    monkeypatch.setenv('TREASURY_RECIPIENT_CONFIRMED',OWNER.address)
+    app=create_app('sqlite:///'+str(tmp_path/'eth.db'),BASE,'operator'*8)
+    t=app.state.treasury
+    assert t.chain_id==1 and t.token=='0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
+    data=responses();data['eth_chainId']='0x1';data['receipt']['logs'][0]['address']=t.token
+    set_rpc(t,data)
+    with TestClient(app) as c:
+        _,a,ah=register(c,'Contributor')
+        message=c.get('/api/treasury/claim-message',params={'transaction_hash':TX},headers=ah).json()['message']
+        assert 'Network: eip155:1' in message
+        payload={'transaction_hash':TX,'wallet_signature':signed(SENDER,message),'operator_authorized':True}
+        for _ in range(2):
+            result=c.post('/api/treasury/claims',headers=ah,json=payload)
+            assert result.status_code==200 and result.json()['confirmed_contributions_usdc']=='2.500000'
+        assert len(c.get('/api/treasury/contributions').json()['items'])==1
+        assert result.json()['recipient_verification']=='operator-confirmed receiving address'
+        assert result.json()['server_can_spend'] is False
+        for path in ['/','/rules','/agents.md','/api/treasury','/treasury']:
+            r=c.get(path);assert r.status_code==200
+            assert 'Butler' not in r.text and 'Dean ' not in r.text
+    app.state.engine.dispose()
+
+def test_operator_confirmation_must_match_exact_recipient(monkeypatch):
+    monkeypatch.setenv('FUNDRAISING_ENABLED','true')
+    monkeypatch.setenv('TREASURY_NETWORK','ethereum')
+    monkeypatch.setenv('TREASURY_ADDRESS',OWNER.address)
+    monkeypatch.setenv('TREASURY_RECIPIENT_CONFIRMED',SENDER.address)
+    with pytest.raises(RuntimeError,match='exact operator-confirmed'):Treasury(BASE)

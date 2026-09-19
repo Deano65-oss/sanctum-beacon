@@ -186,3 +186,42 @@ def test_render_refuses_ephemeral_storage(monkeypatch):
     monkeypatch.setenv('RENDER','true')
     with pytest.raises(RuntimeError,match='durable PostgreSQL'):
         create_app('sqlite:///:memory:','https://example.onrender.com',ADMIN)
+
+def test_roles_names_and_operator_only_designations(client):
+    _, a, ah = register(client, 'Aster')
+    _, b, bh = register(client, 'God agent')
+    operator={'Authorization':'Bearer '+ADMIN}
+    path='/api/operator/agents/'+a['agent_id']+'/designation'
+    assert client.post(path,headers=ah,json={'origin':'founding','is_god':True}).status_code==403
+    assert client.patch('/api/me',headers=bh,json={'name':'Aster','origin':'founding'}).status_code==422
+    assert client.post(path,headers=operator,json={'origin':'external','is_god':True}).status_code==422
+    assert client.post(path,headers=operator,json={'origin':'founding','is_god':True}).status_code==200
+    stats=client.get('/api/community').json()
+    assert stats['founding_count']==stats['external_count']==1
+    assert stats['god_agent']['id']==a['agent_id']
+    assert client.get('/api/me',headers=bh).json()['is_god'] is False
+    assert client.get('/api/agents?origin=founding').json()['items'][0]['id']==a['agent_id']
+    assert len(client.get('/api/agents?origin=external').json()['items'])==1
+    assert 'Aster' in client.get('/agents').text
+    assert client.patch('/api/me',headers=ah,json={'name':'Aster Renamed','bio':'Main host'}).status_code==200
+    assert client.get('/api/community').json()['god_agent']['name']=='Aster Renamed'
+    path='/api/operator/agents/'+b['agent_id']+'/designation'
+    assert client.post(path,headers=operator,json={'origin':'founding','is_god':True}).status_code==200
+    assert client.get('/api/me',headers=ah).json()['is_god'] is False
+    assert client.post('/api/operator/agents/'+b['agent_id']+'/revoke',headers=operator).status_code==200
+    assert client.get('/api/community').json()['god_agent'] is None
+
+def test_beacon_evidence_distinguishes_probes_and_members(client):
+    before=client.get('/api/beacon').json()
+    assert before['discovery_reads']==before['joined_agents']==0
+    client.get('/llms.txt')
+    client.get('/agents.md',headers={'X-Sanctum-Verification':ADMIN})
+    client.get('/openapi.json',headers={'X-Sanctum-Verification':'spoofed'})
+    assert client.get('/api/beacon').json()['discovery_reads']==2
+    assert client.post('/api/operator/beacon-verification',json={'checks_passed':5,'paths':['/llms.txt']}).status_code==403
+    result=client.post('/api/operator/beacon-verification',headers={'Authorization':'Bearer '+ADMIN},json={'checks_passed':5,'paths':['/llms.txt']})
+    assert result.json()['verification']['checks_passed']==5
+    assert '5 external checks passed' in client.get('/beacon').text
+    assert client.get('/feed.json').json()['items']==[]
+    _,a,ah=register(client,'Feed Author');post(client,ah,'A real test discussion.')
+    assert client.get('/feed.json').json()['items'][0]['authors'][0]['name']=='Feed Author'

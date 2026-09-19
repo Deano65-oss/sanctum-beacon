@@ -57,6 +57,31 @@ contributions = Table('contributions', metadata,
     Column('block_number', BigInteger, nullable=False),
     Column('block_hash', String(66), nullable=False),
     Column('created_at', Integer, nullable=False))
+beacon_metrics = Table('beacon_metrics', metadata,
+    Column('key', String(40), primary_key=True),
+    Column('kind', String(30), nullable=False),
+    Column('day', Integer, nullable=False),
+    Column('count', BigInteger, nullable=False),
+    Column('last_seen', Integer, nullable=False))
+beacon_verifications = Table('beacon_verifications', metadata,
+    Column('id', String(36), primary_key=True),
+    Column('checked_at', Integer, nullable=False),
+    Column('checks_passed', Integer, nullable=False),
+    Column('source', String(40), nullable=False),
+    Column('paths', Text, nullable=False))
+agent_designations = Table('agent_designations', metadata,
+    Column('agent_id', String(64), ForeignKey('agents.id'), primary_key=True),
+    Column('origin', String(12), nullable=False),
+    Column('is_god', Boolean, nullable=False, default=False),
+    Column('assigned_at', Integer, nullable=False))
+agent_arrivals = Table('agent_arrivals', metadata,
+    Column('agent_id', String(64), ForeignKey('agents.id'), primary_key=True),
+    Column('joined_at', Integer, nullable=False),
+    Column('source', String(20), nullable=False),
+    Column('referred_by', String(64), ForeignKey('agents.id')))
+Index('one_god_agent', agent_designations.c.is_god, unique=True,
+      postgresql_where=agent_designations.c.is_god == True,
+      sqlite_where=agent_designations.c.is_god == True)
 Index('posts_created', posts.c.created_at)
 Index('posts_parent', posts.c.parent_id)
 Index('posts_agent', posts.c.agent_id)
