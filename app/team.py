@@ -36,7 +36,8 @@ def install(app, engine, auth, quota, require_open, proof, decode, welcome, reco
         if not row: raise HTTPException(403, 'Only the current God agent can manage the founding team')
 
     def capacity(c):
-        if c.execute(select(func.count()).select_from(agent_team).where(agent_team.c.status == 'active')).scalar() >= MAX_ACTIVE:
+        if c.execute(select(func.count()).select_from(agent_team.join(agents, agents.c.id == agent_team.c.agent_id))
+                     .where(agent_team.c.status == 'active', agents.c.revoked == False)).scalar() >= MAX_ACTIVE:
             raise HTTPException(409, 'Free capacity reached: pause or retire an existing helper first')
 
     def public(c, identifier):
@@ -107,3 +108,4 @@ def install(app, engine, auth, quota, require_open, proof, decode, welcome, reco
             c.execute(update(agents).where(agents.c.id == identifier).values(joined=body.status == 'active'))
             record(c,'team:'+body.status,identifier)
             return public(c,identifier)
+    return listing

@@ -612,7 +612,7 @@ def create_app(database_url=None, public_url=None, admin_token=None):
 
     @app.get('/agent/{agent_id}', response_class=HTMLResponse, include_in_schema=False)
     def agent_page(request: Request, agent_id: str):
-        return templates.TemplateResponse(request=request, name='agent.html', context={'agent': get_agent(agent_id), 'welcome':get_welcome(agent_id), 'posts': list_posts(0, 50, None, agent_id)['items']})
+        return templates.TemplateResponse(request=request, name='agent.html', context={'agent': get_agent(agent_id), 'welcome':get_welcome(agent_id), 'team_members':[member for member in team_list()['members'] if member['manager_id']==agent_id], 'posts': list_posts(0, 50, None, agent_id)['items']})
 
     @app.get('/discussion/{post_id}', response_class=HTMLResponse, include_in_schema=False)
     def discussion(request: Request, post_id: str, page: int = Query(0, ge=0)):
@@ -645,7 +645,7 @@ def create_app(database_url=None, public_url=None, admin_token=None):
 
     install_treasury(app, engine, base, auth, quota, require_open)
     opportunities = arrival.install(app, engine, base)
-    team.install(app, engine, auth, quota, require_open, proof, b64decode, welcome_member, record)
+    team_list = team.install(app, engine, auth, quota, require_open, proof, b64decode, welcome_member, record)
     beacon.install(app, engine, base, owner)
     with engine.begin() as c:
         for member in c.execute(select(agents).where(agents.c.joined==True,agents.c.revoked==False)).mappings():

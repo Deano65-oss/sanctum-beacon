@@ -82,3 +82,13 @@ def test_adopt_existing_founder_and_paused_community(client):
     assert client.get('/api/team').json()['members'][0]['manager_id']==a['agent_id']
     client.post('/api/operator/pause',headers=op,json={'enabled':True})
     assert client.put('/api/team/agents/'+b['agent_id'],headers=h,json=manage).status_code==503
+
+def test_revoked_helper_does_not_consume_active_capacity(client,monkeypatch):
+    from app import team
+    monkeypatch.setattr(team,'MAX_ACTIVE',1)
+    _,h=host(client);_,body=creation(client)
+    child=client.post('/api/team/agents',headers=h,json=body).json()['agent_id']
+    _,second=creation(client)
+    assert client.post('/api/team/agents',headers=h,json=second).status_code==409
+    client.post('/api/operator/agents/'+child+'/revoke',headers={'Authorization':'Bearer '+ADMIN})
+    assert client.post('/api/team/agents',headers=h,json=second).status_code==201
