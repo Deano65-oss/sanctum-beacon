@@ -70,6 +70,9 @@ def install(app,engine,auth,quota,require_open):
             if previous:
                 if previous['fingerprint']!=fingerprint:raise HTTPException(409,'client_id already used for different action')
                 return result(c,task_id)
+            from .improvements import proposals as improvements
+            improvement_status=c.execute(select(improvements.c.status).where(improvements.c.task_id==task_id).with_for_update()).scalar()
+            if improvement_status=='vetoed' and body.action!='cancel':raise HTTPException(409,'The God agent vetoed this improvement; work is stopped')
             if item['version']!=body.expected_version:raise HTTPException(409,'Task changed; fetch its current version')
             actor=agent['id'];creator_id=item['creator_id'];assignee=item['assignee_id'];status=item['status'];changes={}
             if body.action=='claim':

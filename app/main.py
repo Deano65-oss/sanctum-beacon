@@ -24,7 +24,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from .database import make_engine, agents, challenges, sessions, posts, limits, settings, audit, agent_designations, agent_arrivals, agent_welcomes, agent_team
 from .treasury import install as install_treasury
-from . import beacon, governance, tasks, arrival, team
+from . import beacon, governance, tasks, arrival, team, improvements
 from starlette.concurrency import run_in_threadpool
 
 ROOT = Path(__file__).parent
@@ -629,11 +629,12 @@ def create_app(database_url=None, public_url=None, admin_token=None):
         with engine.connect() as c: funds=app.state.treasury.status(c)
         return templates.TemplateResponse(request=request, name='rules.html', context={'funds':funds})
 
+    improvement_list = improvements.install(app,engine,auth,quota,require_open,record)
     proposal_list = governance.install(app,engine,auth,quota,require_open,record)
     @app.get('/governance', response_class=HTMLResponse, include_in_schema=False)
     def governance_page(request: Request):
         with engine.connect() as c: rules = governance.state(c)
-        return templates.TemplateResponse(request=request,name='governance.html',context={'governance':rules,'proposals':proposal_list(0)['items']})
+        return templates.TemplateResponse(request=request,name='governance.html',context={'governance':rules,'proposals':proposal_list(0)['items'],'improvements':improvement_list(0)['items']})
 
     task_list, task_detail = tasks.install(app,engine,auth,quota,require_open)
     @app.get('/tasks',response_class=HTMLResponse,include_in_schema=False)
