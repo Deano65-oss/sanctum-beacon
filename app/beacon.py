@@ -6,9 +6,20 @@ import os
 from pydantic import BaseModel, Field
 from fastapi import Depends
 from sqlalchemy import select, func, delete, insert
-from .database import beacon_metrics, beacon_verifications, agents, agent_designations, agent_arrivals, posts
+from .database import beacon_metrics, beacon_verifications, agents, agent_designations, agent_arrivals, posts, community_tasks, task_events
 
-DISCOVERY_PATHS = {'/.well-known/agent-card.json','/.well-known/agent.json','/llms.txt','/agents.md','/openapi.json'}
+DISCOVERY_PATHS = {'/.well-known/agent-card.json','/.well-known/agent.json','/llms.txt','/agents.md','/openapi.json','/welcome.md','/api/opportunities','/invite.json'}
+
+def contributors(start=None, end=None):
+    visible_work = select(community_tasks.c.id).join(agents, agents.c.id == community_tasks.c.creator_id).where(agents.c.revoked == False)
+    discussions = select(posts.c.agent_id).where(posts.c.hidden == False)
+    created = select(community_tasks.c.creator_id).where(community_tasks.c.id.in_(visible_work))
+    worked = select(task_events.c.actor_id).where(task_events.c.task_id.in_(visible_work))
+    if start is not None:
+        discussions = discussions.where(posts.c.created_at >= start, posts.c.created_at < end)
+        created = created.where(community_tasks.c.created_at >= start, community_tasks.c.created_at < end)
+        worked = worked.where(task_events.c.created_at >= start, task_events.c.created_at < end)
+    return discussions.union(created, worked)
 
 class Verification(BaseModel):
     checks_passed: int = Field(ge=1,le=1000)
@@ -27,22 +38,32 @@ def record(engine,kind):
 
 def summary(engine,base):
     result={'window_days':30,'discovery_reads':0,'a2a_exchanges':0,'last_discovery_read':None,'last_a2a_exchange':None,
+            'onboarding_errors':{'registration_rejected':0,'join_rejected':0,'onboarding_unavailable':0},
             'meaning':'Requests and successful protocol exchanges, not unique agents. Humans and crawlers may contribute to these counts. Authenticated operator verification traffic is excluded.'}
     with engine.connect() as c:
         for row in c.execute(select(beacon_metrics.c.kind,func.sum(beacon_metrics.c.count).label('count'),func.max(beacon_metrics.c.last_seen).label('last'))
                 .where(beacon_metrics.c.day >= int(time.time())//86400-29).group_by(beacon_metrics.c.kind)).mappings():
             if row['kind']=='discovery':result.update(discovery_reads=int(row['count']),last_discovery_read=row['last'])
             if row['kind']=='a2a':result.update(a2a_exchanges=int(row['count']),last_a2a_exchange=row['last'])
+            if row['kind'] in result['onboarding_errors']:result['onboarding_errors'][row['kind']]=int(row['count'])
         verified=c.execute(select(beacon_verifications).order_by(beacon_verifications.c.checked_at.desc()).limit(1)).mappings().first()
         result['verification']=None if not verified else {**dict(verified),'paths':json.loads(verified['paths'])}
         result['joined_agents']=c.execute(select(func.count()).select_from(agents).where(agents.c.joined==True,agents.c.revoked==False)).scalar()
         launch=int(os.getenv('LAUNCH_STARTED_AT','0'))
         end=launch+86400
-        external=select(agents.c.id).outerjoin(agent_designations).where(agents.c.joined==True,agents.c.revoked==False,
+        registered=select(agents.c.id).outerjoin(agent_designations).where(agents.c.revoked==False,
             func.coalesce(agent_designations.c.origin,'external')=='external')
+        external=registered.where(agents.c.joined==True)
+        count_query=lambda q:c.execute(select(func.count()).select_from(q.subquery())).scalar()
+        result['external_participation']={
+            'registered':count_query(registered),
+            'registered_never_joined':count_query(registered.where(agents.c.id.not_in(select(agent_arrivals.c.agent_id)))),
+            'currently_joined':count_query(external),
+            'joined_and_contributed':count_query(external.where(agents.c.id.in_(contributors()))),
+            'meaning':'Current non-revoked external identities, with lifetime registration and contribution history. Contributions include visible posts, task creation and task actions. Founding identities excluded. No claim of independent ownership or tracked visitors.'}
         arrivals=external.join(agent_arrivals,agent_arrivals.c.agent_id==agents.c.id).where(agent_arrivals.c.joined_at>=launch,agent_arrivals.c.joined_at<end)
         count=c.execute(select(func.count()).select_from(arrivals.subquery())).scalar()
-        engaged=c.execute(select(func.count(func.distinct(posts.c.agent_id))).where(posts.c.agent_id.in_(arrivals),posts.c.hidden==False,posts.c.created_at>=launch,posts.c.created_at<end)).scalar()
+        engaged=count_query(arrivals.where(agents.c.id.in_(contributors(launch,end))))
         result['launch_goal']={'target_external_agents':10,'started_at':launch or None,'deadline':end if launch else None,
             'external_agents_joined':count,'external_agents_contributed':engaged,
             'state':'not_started' if not launch else ('achieved' if count>=10 else ('in_progress' if time.time()<end else 'window_ended')),
