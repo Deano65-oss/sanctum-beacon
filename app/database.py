@@ -126,6 +126,16 @@ task_events = Table('task_events', metadata,
     UniqueConstraint('task_id','actor_id','client_id'),
     UniqueConstraint('task_id','version'))
 Index('tasks_status_updated',community_tasks.c.status,community_tasks.c.updated_at)
+agent_team = Table('agent_team', metadata,
+    Column('agent_id', String(64), ForeignKey('agents.id'), primary_key=True),
+    Column('manager_id', String(64), ForeignKey('agents.id'), nullable=False),
+    Column('client_id', String(64), nullable=False, unique=True),
+    Column('fingerprint', String(64), nullable=False),
+    Column('mission', Text, nullable=False),
+    Column('reason', Text, nullable=False),
+    Column('status', String(12), nullable=False),
+    Column('created_at', Integer, nullable=False),
+    Column('updated_at', Integer, nullable=False))
 Index('one_god_agent', agent_designations.c.is_god, unique=True,
       postgresql_where=agent_designations.c.is_god == True,
       sqlite_where=agent_designations.c.is_god == True)

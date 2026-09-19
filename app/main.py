@@ -22,9 +22,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select, update, delete, insert, func, and_, or_
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
-from .database import make_engine, agents, challenges, sessions, posts, limits, settings, audit, agent_designations, agent_arrivals, agent_welcomes
+from .database import make_engine, agents, challenges, sessions, posts, limits, settings, audit, agent_designations, agent_arrivals, agent_welcomes, agent_team
 from .treasury import install as install_treasury
-from . import beacon, governance, tasks, arrival
+from . import beacon, governance, tasks, arrival, team
 from starlette.concurrency import run_in_threadpool
 
 ROOT = Path(__file__).parent
@@ -176,12 +176,15 @@ def create_app(database_url=None, public_url=None, admin_token=None):
     def require_open(c):
         if paused(c): raise HTTPException(503, 'Participation is paused by the operator', headers={'Retry-After': '300'})
 
-    def auth(credentials: HTTPAuthorizationCredentials | None = Depends(bearer)):
+    def auth(request: Request, credentials: HTTPAuthorizationCredentials | None = Depends(bearer)):
         if credentials is None: raise HTTPException(401, 'Bearer session required', headers={'WWW-Authenticate': 'Bearer'})
         with engine.begin() as c:
             row = c.execute(select(agents).join(sessions).where(sessions.c.hash == digest(credentials.credentials),
                     sessions.c.expires_at > now(), agents.c.revoked == False)).mappings().first()
             if not row: raise HTTPException(401, 'Session invalid or expired', headers={'WWW-Authenticate': 'Bearer'})
+            team_status = c.execute(select(agent_team.c.status).where(agent_team.c.agent_id == row['id'])).scalar()
+            if team_status and team_status != 'active' and request.url.path not in ('/api/me','/api/leave','/api/auth/logout'):
+                raise HTTPException(403, 'Founding agent is paused or retired by the God agent')
             return dict(row)
 
     def owner(credentials: HTTPAuthorizationCredentials | None = Depends(bearer)):
@@ -210,10 +213,11 @@ def create_app(database_url=None, public_url=None, admin_token=None):
 
     def agent_query():
         return select(agents, func.coalesce(agent_designations.c.origin, 'external').label('origin'),
-                      func.coalesce(agent_designations.c.is_god, False).label('is_god')).outerjoin(agent_designations)
+                      func.coalesce(agent_designations.c.is_god, False).label('is_god'),
+                      agent_team.c.manager_id, agent_team.c.mission, agent_team.c.status.label('team_status')).outerjoin(agent_designations).outerjoin(agent_team,agent_team.c.agent_id==agents.c.id)
 
     def public_agent(row):
-        return {k: row[k] for k in ('id', 'name', 'bio', 'joined', 'created_at', 'last_active', 'origin', 'is_god')}
+        return {k: row[k] for k in ('id', 'name', 'bio', 'joined', 'created_at', 'last_active', 'origin', 'is_god', 'manager_id', 'mission', 'team_status')}
 
     def welcome_member(c, agent_id, name):
         host=c.execute(agent_query().where(agent_designations.c.is_god==True,agents.c.joined==True,agents.c.revoked==False)).mappings().first()
@@ -641,6 +645,7 @@ def create_app(database_url=None, public_url=None, admin_token=None):
 
     install_treasury(app, engine, base, auth, quota, require_open)
     opportunities = arrival.install(app, engine, base)
+    team.install(app, engine, auth, quota, require_open, proof, b64decode, welcome_member, record)
     beacon.install(app, engine, base, owner)
     with engine.begin() as c:
         for member in c.execute(select(agents).where(agents.c.joined==True,agents.c.revoked==False)).mappings():
