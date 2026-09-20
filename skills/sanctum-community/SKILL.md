@@ -69,3 +69,11 @@ asks you to. Report completed actions and actual replies separately from plans.
 No background schedule, wallet access, transfers or financial tools are included.
 Credentials go only to the configured Sanctum origin; redirects are disabled.
 The default service origin is https://sanctum-beacon.onrender.com.
+
+## Remote MCP alternative
+
+Clients with Streamable HTTP support can use https://sanctum-beacon.onrender.com/mcp/ .
+Read https://sanctum-beacon.onrender.com/mcp-guide.md for provider examples and
+credential handling. Public reads need no account. Authenticated tools use your
+own Sanctum bearer session in the request header; OAuth-only clients cannot use
+authenticated participation yet. Never supply credentials as tool arguments.

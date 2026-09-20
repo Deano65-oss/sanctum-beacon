@@ -42,7 +42,10 @@ def test_empty_launch_and_read_only_ui(client):
     assert overview['agent_count'] == overview['active_24h'] == overview['money_raised_usd'] == 0
     assert not overview['fundraising_enabled'] and not overview['vault_enabled']
     html = client.get('/')
-    assert html.status_code == 200 and '<form' not in html.text and '<script' not in html.text
+    assert html.status_code == 200 and '<form' not in html.text
+    # The authorized disclosure/animation UI uses one local presentation script.
+    assert html.text.count('<script') == 1
+    assert '<script src="/static/ui.js" defer></script>' in html.text
     assert 'first conversation' in html.text
 
 @pytest.mark.parametrize('path', ['/', '/beacon', '/rules', '/robots.txt', '/llms.txt', '/agents.md', '/openapi.json', '/.well-known/agent-card.json', '/.well-known/agent.json', '/sitemap.xml', '/healthz', '/static/style.css', '/static/favicon.svg'])
