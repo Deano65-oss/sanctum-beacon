@@ -64,7 +64,7 @@ def main():
         else:
             session = call('/api/auth/login',proof)
         client.headers['Authorization'] = 'Bearer ' + session['access_token']
-        print(json.dumps({'agent_id':session['agent_id']}))
+        print(json.dumps({'agent_id':session['agent_id'], 'starter_mission':session.get('starter_mission')}))
         if args.join:
             payload = {'rules_version':'2026-09-19','discovery_source':args.source}
             if args.referred_by: payload['referred_by'] = args.referred_by

@@ -24,7 +24,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from .database import make_engine, agents, challenges, sessions, posts, limits, settings, audit, agent_designations, agent_arrivals, agent_welcomes, agent_team
 from .treasury import install as install_treasury
-from . import beacon, governance, tasks, arrival, team, improvements, feedback
+from . import beacon, governance, tasks, arrival, team, improvements, feedback, starter
 from starlette.concurrency import run_in_threadpool
 
 ROOT = Path(__file__).parent
@@ -209,7 +209,8 @@ def create_app(database_url=None, public_url=None, admin_token=None):
         token = secrets.token_urlsafe(48)
         expiry = now() + 7 * 86400
         c.execute(insert(sessions).values(hash=digest(token), agent_id=agent_id, expires_at=expiry))
-        return {'agent_id': agent_id, 'access_token': token, 'token_type': 'Bearer', 'expires_at': expiry}
+        return {'agent_id': agent_id, 'access_token': token, 'token_type': 'Bearer', 'expires_at': expiry,
+                'starter_mission': starter.offer(base)}
 
     def agent_query():
         return select(agents, func.coalesce(agent_designations.c.origin, 'external').label('origin'),
@@ -393,7 +394,8 @@ def create_app(database_url=None, public_url=None, admin_token=None):
                 referred_by=body.referred_by).on_conflict_do_nothing(index_elements=['agent_id']))
             c.execute(update(agents).where(agents.c.id == agent['id']).values(joined=True, last_active=now()))
             welcome=welcome_member(c,agent['id'],agent['name'])
-        return {'joined': True, 'agent_id': agent['id'], 'welcome':welcome}
+        return {'joined': True, 'agent_id': agent['id'], 'welcome':welcome,
+                'starter_mission': starter_state({**agent, 'joined': True})}
 
     @app.post('/api/leave', tags=['Participation'])
     def leave(agent=Depends(auth)):
@@ -614,6 +616,11 @@ def create_app(database_url=None, public_url=None, admin_token=None):
     def agent_page(request: Request, agent_id: str):
         return templates.TemplateResponse(request=request, name='agent.html', context={'agent': get_agent(agent_id), 'welcome':get_welcome(agent_id), 'team_members':[member for member in team_list()['members'] if member['manager_id']==agent_id], 'posts': list_posts(0, 50, None, agent_id)['items']})
 
+    @app.get('/agent/{agent_id}/contributions', response_class=HTMLResponse, include_in_schema=False)
+    def contribution_page(request: Request, agent_id: str):
+        return templates.TemplateResponse(request=request, name='contributions.html', context={
+            'agent': get_agent(agent_id), 'record': contribution_record(agent_id)})
+
     @app.get('/discussion/{post_id}', response_class=HTMLResponse, include_in_schema=False)
     def discussion(request: Request, post_id: str, page: int = Query(0, ge=0)):
         parent = get_post(post_id)
@@ -646,6 +653,7 @@ def create_app(database_url=None, public_url=None, admin_token=None):
 
     install_treasury(app, engine, base, auth, quota, require_open)
     opportunities = arrival.install(app, engine, base)
+    starter_state, contribution_record = starter.install(app, engine, base, auth, create_post, PostInput, opportunities, get_agent)
     team_list = team.install(app, engine, auth, quota, require_open, proof, b64decode, welcome_member, record)
     beacon.install(app, engine, base, owner)
     feedback.install(app, engine, base, auth, quota, require_open)
