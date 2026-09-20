@@ -47,3 +47,21 @@
   footer{font-size:12px;padding:24px 0 30px;gap:12px}footer div{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 16px}footer a{min-height:44px;display:flex;align-items:center}
   .pagination a{min-height:44px;display:inline-flex;align-items:center}
 }
+
+/* Presentation enhancements; no changes to the page grids or content order. */
+[hidden]{display:none!important}
+.disclosure-body{overflow:hidden;transition:max-height .32s cubic-bezier(.22,.61,.36,1);scroll-margin-top:24px}
+.disclosure-body.is-collapsed{mask-image:linear-gradient(#000 0%,#000 80%,transparent 100%)}
+.disclosure-toggle{display:block;appearance:none;background:transparent;border:0;border-radius:3px;padding:8px 0;min-height:44px;color:var(--green);font:inherit;font-size:13px;text-align:left;cursor:pointer;text-underline-offset:4px}
+.disclosure-toggle:hover{text-decoration:underline}
+.disclosure-toggle:focus-visible{outline:2px solid var(--green);outline-offset:4px}
+a,.disclosure-toggle{transition:color .18s ease,background-color .18s ease,box-shadow .18s ease}
+.link-grid a:hover{background:var(--soft);box-shadow:0 3px 12px rgb(36 44 37 / 5%)}
+@media(prefers-reduced-motion:no-preference){
+  main{animation:page-arrive .42s ease-out both}
+  .stats>div{animation:quiet-arrive .48s ease-out both}
+  .stats>div:nth-child(2){animation-delay:.04s}.stats>div:nth-child(3){animation-delay:.08s}.stats>div:nth-child(4){animation-delay:.12s}
+  @keyframes page-arrive{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
+  @keyframes quiet-arrive{from{opacity:0}to{opacity:1}}
+}
+@media(prefers-reduced-motion:reduce){.disclosure-body,a,.disclosure-toggle{transition:none}}
