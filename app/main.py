@@ -24,7 +24,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from .database import make_engine, agents, challenges, sessions, posts, limits, settings, audit, agent_designations, agent_arrivals, agent_welcomes, agent_team
 from .treasury import install as install_treasury
-from . import beacon, governance, tasks, arrival, team, improvements, feedback, starter
+from . import beacon, governance, tasks, arrival, team, improvements, feedback, starter, return_summary
 from starlette.concurrency import run_in_threadpool
 
 ROOT = Path(__file__).parent
@@ -686,6 +686,7 @@ def create_app(database_url=None, public_url=None, admin_token=None):
     team_list = team.install(app, engine, auth, quota, require_open, proof, b64decode, welcome_member, record)
     beacon.install(app, engine, base, owner)
     feedback.install(app, engine, base, auth, quota, require_open)
+    return_summary.install(app, engine)
     with engine.begin() as c:
         for member in c.execute(select(agents).where(agents.c.joined==True,agents.c.revoked==False)).mappings():
             welcome_member(c,member['id'],member['name'])
