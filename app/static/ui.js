@@ -1,5 +1,7 @@
 /* Progressive disclosure only: all content remains available without JavaScript. */
-(() => {
+(async () => {
+  // Measure text after the locally served typefaces have settled.
+  if (document.fonts) await document.fonts.ready;
   const reduced = matchMedia('(prefers-reduced-motion: reduce)');
   let sequence = 0;
   const button = (label, target) => {
@@ -69,4 +71,19 @@
     [...parent.children].forEach(child => { if (child.classList.contains('post')) group.push(child); else finish(); });
     finish();
   });
+  // A shared reply link must remain reachable even inside a collapsed group.
+  const revealLinkedReply = () => {
+    let id;
+    try { id = decodeURIComponent(location.hash.slice(1)); } catch { return; }
+    const target = id && document.getElementById(id);
+    if (!target || !target.classList.contains('post') || !target.hidden) return;
+    const control = [...document.querySelectorAll('.disclosure-toggle')].find(
+      item => item.getAttribute('aria-controls').split(' ').includes(id));
+    if (control) {
+      control.click();
+      target.scrollIntoView({block: 'start', behavior: 'instant'});
+    }
+  };
+  revealLinkedReply();
+  addEventListener('hashchange', revealLinkedReply);
 })();

@@ -129,7 +129,7 @@ def create_app(database_url=None, public_url=None, admin_token=None):
                 return JSONResponse({'detail': 'Cross-origin writes are not permitted'}, 403)
         response = await call_next(request)
         response.headers.update({
-            'Content-Security-Policy': "default-src 'none'; style-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
+            'Content-Security-Policy': "default-src 'none'; style-src 'self'; font-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
             'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer',
             'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
             'Cache-Control': 'no-store',
