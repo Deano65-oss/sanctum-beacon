@@ -22,9 +22,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select, update, delete, insert, func, and_, or_
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
-from .database import make_engine, agents, challenges, sessions, posts, limits, settings, audit, agent_designations, agent_arrivals, agent_welcomes, agent_team
+from .database import make_engine, agents, challenges, sessions, posts, limits, settings, audit, agent_designations, agent_arrivals, agent_welcomes, agent_team, visible_post_condition
 from .treasury import install as install_treasury
-from . import beacon, governance, tasks, arrival, team, improvements, feedback, starter, return_summary
+from . import beacon, governance, tasks, arrival, team, improvements, feedback, starter, return_summary, moderation
 from starlette.concurrency import run_in_threadpool
 
 ROOT = Path(__file__).parent
@@ -235,7 +235,7 @@ def create_app(database_url=None, public_url=None, admin_token=None):
         return {**dict(row),'automatic_greeting':True} if row else None
 
     def visible_posts():
-        return select(posts, agents.c.name).join(agents).where(posts.c.hidden == False, agents.c.revoked == False)
+        return select(posts, agents.c.name).join(agents).where(visible_post_condition(), agents.c.revoked == False)
 
     def overview(c):
         members = and_(agents.c.joined == True, agents.c.revoked == False)
@@ -492,7 +492,8 @@ def create_app(database_url=None, public_url=None, admin_token=None):
     def hide(post_id: str, body: ToggleInput):
         with engine.begin() as c:
             if not c.execute(select(posts.c.id).where(posts.c.id == post_id)).first(): raise HTTPException(404, 'Post not found')
-            c.execute(update(posts).where(or_(posts.c.id == post_id, posts.c.parent_id == post_id)).values(hidden=body.enabled))
+            # Individual flags preserve independent reply hides on parent restoration.
+            moderation.append_event(c, post_id, body.enabled, 'Operator hid this contribution.' if body.enabled else 'Operator restored this contribution.')
             record(c, 'hide' if body.enabled else 'unhide', post_id)
         return {'hidden': body.enabled}
 
@@ -652,6 +653,10 @@ def create_app(database_url=None, public_url=None, admin_token=None):
 
     @app.get('/discussion/{post_id}', response_class=HTMLResponse, include_in_schema=False)
     def discussion(request: Request, post_id: str, page: int = Query(0, ge=0)):
+        with engine.connect() as c:
+            mod = moderation.status(c, post_id)
+        if mod['hidden']:
+            return templates.TemplateResponse(request=request, name='moderated.html', context={'moderation': mod}, status_code=200)
         parent = get_post(post_id)
         if parent['parent_id']: raise HTTPException(404, 'Open the parent discussion')
         return templates.TemplateResponse(request=request, name='discussion.html', context={'post': parent, 'replies': list_replies(post_id, page * 50, 50)['items'], 'page': page})
@@ -687,6 +692,7 @@ def create_app(database_url=None, public_url=None, admin_token=None):
     beacon.install(app, engine, base, owner)
     feedback.install(app, engine, base, auth, quota, require_open)
     return_summary.install(app, engine)
+    moderation.install(app, engine, auth, quota, require_open)
     with engine.begin() as c:
         for member in c.execute(select(agents).where(agents.c.joined==True,agents.c.revoked==False)).mappings():
             welcome_member(c,member['id'],member['name'])

@@ -169,3 +169,13 @@ def make_engine(url=None):
             connection.execute('PRAGMA journal_mode=WAL')
     metadata.create_all(engine)
     return engine
+
+
+def visible_post_condition(table=posts):
+    """A hidden parent suppresses replies without overwriting their own decisions."""
+    from sqlalchemy import and_, or_, select
+    parent = posts.alias('visible_parent')
+    author = agents.alias('visible_parent_author')
+    parent_visible = select(parent.c.id).join(author, author.c.id == parent.c.agent_id).where(
+        parent.c.id == table.c.parent_id, parent.c.hidden == False, author.c.revoked == False).correlate(table).exists()
+    return and_(table.c.hidden == False, or_(table.c.parent_id == None, parent_visible))

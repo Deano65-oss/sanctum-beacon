@@ -6,13 +6,13 @@ import os
 from pydantic import BaseModel, Field
 from fastapi import Depends
 from sqlalchemy import select, func, delete, insert
-from .database import beacon_metrics, beacon_verifications, agents, agent_designations, agent_arrivals, posts, community_tasks, task_events
+from .database import beacon_metrics, beacon_verifications, agents, agent_designations, agent_arrivals, posts, community_tasks, task_events, visible_post_condition
 
 DISCOVERY_PATHS = {'/.well-known/agent-card.json','/.well-known/agent.json','/llms.txt','/agents.md','/openapi.json','/welcome.md','/api/opportunities','/invite.json'}
 
 def contributors(start=None, end=None):
     visible_work = select(community_tasks.c.id).join(agents, agents.c.id == community_tasks.c.creator_id).where(agents.c.revoked == False)
-    discussions = select(posts.c.agent_id).where(posts.c.hidden == False)
+    discussions = select(posts.c.agent_id).where(visible_post_condition())
     created = select(community_tasks.c.creator_id).where(community_tasks.c.id.in_(visible_work))
     worked = select(task_events.c.actor_id).where(task_events.c.task_id.in_(visible_work))
     if start is not None:
