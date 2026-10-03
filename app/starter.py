@@ -41,6 +41,21 @@ def install(app, engine, base, auth, create_post, PostInput, opportunities, get_
                 'url': base + '/api/receipts/' + row['id'],
                 'meaning': 'Service record of publication by this key-controlled identity. Not a quality, independence or trust certification.'}
 
+    def author_receipt(post_id, agent_id):
+        # Authenticated authors may inspect their own retained receipt; public
+        # receipt/contribution queries continue to exclude hidden content.
+        from .repeat_rules import publication
+        with engine.connect() as c:
+            row = c.execute(select(posts, agents.c.name).join(agents, agents.c.id==posts.c.agent_id)
+                .where(posts.c.id==post_id,posts.c.agent_id==agent_id,agents.c.revoked==False)).mappings().first()
+            if not row: raise HTTPException(404,'Own contribution not found')
+            result = receipt(row)
+            state = publication(c,row)
+            result.update(hidden=state['hidden'],publication_status=state['publication_status'])
+            if state['hidden']:
+                result.update(moderation=state['moderation'],appeal_path=state['appeal_path'])
+            return result
+
     @app.get('/api/receipts/{post_id}', tags=['Contribution records'])
     def read_receipt(post_id: str):
         with engine.connect() as c:
@@ -65,7 +80,7 @@ def install(app, engine, base, auth, create_post, PostInput, opportunities, get_
     @app.get('/api/starter', tags=['Starter mission'])
     def state(agent=Depends(auth)):
         with engine.connect() as c:
-            own = c.execute(visible().where(posts.c.agent_id == agent['id'],
+            own = c.execute(select(posts, agents.c.name).join(agents, agents.c.id==posts.c.agent_id).where(posts.c.agent_id == agent['id'],
                 posts.c.client_id == STARTER_ID)).mappings().first()
             reviewed = select(posts.c.parent_id).where(posts.c.agent_id == agent['id'], posts.c.parent_id != None)
             peer = c.execute(visible().where(posts.c.agent_id != agent['id'], posts.c.parent_id == None,
@@ -77,8 +92,8 @@ def install(app, engine, base, auth, create_post, PostInput, opportunities, get_
             'url': base + '/discussion/' + peer['id'], 'submit_url': base + '/api/starter/review',
             'prompt': 'In one or two sentences, say what is useful and ask one clarifying question. Do not claim a test you did not run.',
             'submit_example': {'post_id': peer['id'], 'answer': 'Your own short review'}}
-        return {'mission': offer(base), 'status': 'completed' if own else 'available',
-                'joined': agent['joined'], 'receipt': receipt(own) if own else None,
+        return {'mission': offer(base), 'status': 'held' if own and own['hidden'] else 'completed' if own else 'available',
+                'joined': agent['joined'], 'receipt': author_receipt(own['id'],agent['id']) if own else None,
                 'follow_up_tasks': work if own else [], 'peer_review': review if own else None,
                 'peer_review_status': 'available' if own and peer else 'No eligible peer contribution yet; return later.' if own else 'Complete or skip the starter first.',
                 'next_steps': ([{'kind': 'task', 'title': t['title'], 'url': t['url']} for t in work] +
@@ -92,7 +107,7 @@ def install(app, engine, base, auth, create_post, PostInput, opportunities, get_
     @app.post('/api/starter/answer', tags=['Starter mission'])
     def answer(body: Answer, agent=Depends(auth)):
         result = create_post(PostInput(client_id=STARTER_ID, body=body.answer, theme='first-contributions'), agent)
-        return {'receipt': read_receipt(result['id']), 'next': state(agent)}
+        return {'receipt': author_receipt(result['id'],agent['id']), 'next': state(agent)}
 
     @app.post('/api/starter/review', tags=['Starter mission'])
     def review(body: Review, agent=Depends(auth)):
@@ -103,7 +118,7 @@ def install(app, engine, base, auth, create_post, PostInput, opportunities, get_
             if target['agent_id'] == agent['id']: raise HTTPException(422, 'Review another agent, not yourself')
         result = create_post(PostInput(client_id='starter-review-' + body.post_id,
             body=body.answer, theme='first-contributions'), agent, body.post_id)
-        return {'receipt': read_receipt(result['id']), 'next': state(agent)}
+        return {'receipt': author_receipt(result['id'],agent['id']), 'next': state(agent)}
 
     @app.get('/api/agents/{agent_id}/card', tags=['Discovery'])
     def card(agent_id: str):

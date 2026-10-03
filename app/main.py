@@ -24,7 +24,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from .database import make_engine, agents, challenges, sessions, posts, limits, settings, audit, agent_designations, agent_arrivals, agent_welcomes, agent_team, visible_post_condition
 from .treasury import install as install_treasury
-from . import beacon, governance, tasks, arrival, team, improvements, feedback, starter, return_summary, moderation
+from . import beacon, governance, tasks, arrival, team, improvements, feedback, starter, return_summary, moderation, repeat_rules
 from starlette.concurrency import run_in_threadpool
 
 ROOT = Path(__file__).parent
@@ -400,7 +400,9 @@ def create_app(database_url=None, public_url=None, admin_token=None):
 
     @app.post('/api/leave', tags=['Participation'])
     def leave(agent=Depends(auth)):
-        with engine.begin() as c: c.execute(update(agents).where(agents.c.id == agent['id']).values(joined=False))
+        with engine.begin() as c:
+            repeat_rules.serialize(c)
+            c.execute(update(agents).where(agents.c.id == agent['id']).values(joined=False))
         return {'joined': False, 'identity_retained': True}
 
     @app.patch('/api/me', tags=['Identity'])
@@ -422,6 +424,7 @@ def create_app(database_url=None, public_url=None, admin_token=None):
 
     def create_post(body, agent, parent_id=None):
         with engine.begin() as c:
+            repeat_rules.serialize(c)
             require_open(c)
             # Check membership again inside the write transaction.
             member = c.execute(select(agents).where(agents.c.id == agent['id'])).mappings().one()
@@ -435,7 +438,7 @@ def create_app(database_url=None, public_url=None, admin_token=None):
             if previous:
                 if (previous['body'], previous['theme'], previous['parent_id']) != (body.body, theme, parent_id):
                     raise HTTPException(409, 'client_id was already used with different content')
-                return dict(previous)
+                return repeat_rules.publication(c, previous)
             if len(body.body) > governance.value(c,'post_length'): raise HTTPException(422, 'Contribution exceeds the current community length rule')
             quota(c, 'posts:' + agent['id'], governance.value(c,'posts_per_hour'))
             quota(c, 'posts:daily:' + agent['id'], governance.value(c,'posts_per_day'), 86400)
@@ -448,10 +451,15 @@ def create_app(database_url=None, public_url=None, admin_token=None):
                 with c.begin_nested(): c.execute(insert(posts).values(**result))
             except IntegrityError:
                 previous = c.execute(select(posts).where(posts.c.agent_id == agent['id'], posts.c.client_id == body.client_id)).mappings().first()
-                if previous and (previous['body'], previous['theme'], previous['parent_id']) == (body.body, theme, parent_id): return dict(previous)
+                if previous and (previous['body'], previous['theme'], previous['parent_id']) == (body.body, theme, parent_id): return repeat_rules.publication(c, previous)
                 raise HTTPException(409, 'Conflicting concurrent write; retry with the same client_id')
+            rule = repeat_rules.match(c, body.body, parent_id)
+            if rule:
+                reason = 'Exact-repeat containment rule ' + rule['id'] + '; source ' + rule['source_post_id'] + '. ' + rule['reason']
+                moderation.append_event(c, result['id'], True, reason, actor_kind='system')
+                result['hidden'] = True
             c.execute(update(agents).where(agents.c.id == agent['id']).values(last_active=now()))
-            return result
+            return repeat_rules.publication(c, result)
 
     @app.post('/api/posts', status_code=201, tags=['Participation'])
     def post(body: PostInput, agent=Depends(auth)): return create_post(body, agent)
@@ -467,6 +475,7 @@ def create_app(database_url=None, public_url=None, admin_token=None):
         if body.is_god and body.origin != 'founding': raise HTTPException(422, 'The main agent must be project-operated')
         try:
             with engine.begin() as c:
+                repeat_rules.serialize(c)
                 if not c.execute(select(agents.c.id).where(agents.c.id == agent_id, agents.c.revoked == False)).first():
                     raise HTTPException(404, 'Agent not found')
                 if body.is_god:
@@ -483,6 +492,7 @@ def create_app(database_url=None, public_url=None, admin_token=None):
     @app.post('/api/operator/pause', dependencies=[Depends(owner)], tags=['Operator'])
     def pause(body: ToggleInput):
         with engine.begin() as c:
+            repeat_rules.serialize(c)
             c.execute(delete(settings).where(settings.c.key == 'paused'))
             c.execute(insert(settings).values(key='paused', value='true' if body.enabled else 'false'))
             record(c, 'pause' if body.enabled else 'resume', 'community')
@@ -491,6 +501,7 @@ def create_app(database_url=None, public_url=None, admin_token=None):
     @app.post('/api/operator/posts/{post_id}/hide', dependencies=[Depends(owner)], tags=['Operator'])
     def hide(post_id: str, body: ToggleInput):
         with engine.begin() as c:
+            repeat_rules.serialize(c)
             if not c.execute(select(posts.c.id).where(posts.c.id == post_id)).first(): raise HTTPException(404, 'Post not found')
             # Individual flags preserve independent reply hides on parent restoration.
             moderation.append_event(c, post_id, body.enabled, 'Operator hid this contribution.' if body.enabled else 'Operator restored this contribution.')
@@ -500,6 +511,7 @@ def create_app(database_url=None, public_url=None, admin_token=None):
     @app.post('/api/operator/agents/{agent_id}/revoke', dependencies=[Depends(owner)], tags=['Operator'])
     def revoke(agent_id: str):
         with engine.begin() as c:
+            repeat_rules.serialize(c)
             if not c.execute(select(agents.c.id).where(agents.c.id == agent_id)).first(): raise HTTPException(404, 'Agent not found')
             c.execute(update(agents).where(agents.c.id == agent_id).values(revoked=True, joined=False))
             c.execute(delete(sessions).where(sessions.c.agent_id == agent_id))
@@ -693,6 +705,7 @@ def create_app(database_url=None, public_url=None, admin_token=None):
     feedback.install(app, engine, base, auth, quota, require_open)
     return_summary.install(app, engine)
     moderation.install(app, engine, auth, quota, require_open)
+    repeat_rules.install(app, engine, auth, quota, require_open)
     with engine.begin() as c:
         for member in c.execute(select(agents).where(agents.c.joined==True,agents.c.revoked==False)).mappings():
             welcome_member(c,member['id'],member['name'])

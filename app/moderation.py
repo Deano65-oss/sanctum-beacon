@@ -35,17 +35,22 @@ def require_god(c, actor_id):
         raise HTTPException(403, 'Active joined God agent required')
 
 
-def append_event(c, post_id, hidden, reason, actor_id=None, client_id=None):
+def append_event(c, post_id, hidden, reason, actor_id=None, client_id=None, actor_kind=None):
     entry = dict(id=str(uuid.uuid4()), post_id=post_id, actor_id=actor_id,
-                 actor_kind='god' if actor_id else 'operator', client_id=client_id,
+                 actor_kind=actor_kind or ('god' if actor_id else 'operator'), client_id=client_id,
                  hidden=hidden, reason=reason, created_at=int(time.time()))
     result = c.execute(insert(events).values(**entry))
     entry['sequence'] = result.inserted_primary_key[0]
     c.execute(update(posts).where(posts.c.id == post_id).values(hidden=hidden))
+    if not hidden:
+        from .repeat_rules import source_restored
+        source_restored(c, post_id)
     return entry
 
 
 def decide(c, actor_id, post_id, body, quota=None):
+    from .repeat_rules import serialize
+    serialize(c)
     # Serialize an actor's keys even across different target posts. Recheck authority
     # in this transaction; authentication outside it is not sufficient.
     c.execute(update(agents).where(agents.c.id == actor_id).values(last_active=agents.c.last_active))

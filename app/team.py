@@ -91,7 +91,9 @@ def install(app, engine, auth, quota, require_open, proof, decode, welcome, reco
 
     @app.put('/api/team/agents/{identifier}', tags=['Founding team'])
     def manage(identifier:str, body:ManageAgent, agent=Depends(auth)):
+        from .repeat_rules import serialize
         with engine.begin() as c:
+            serialize(c)
             require_open(c); leader(c,agent)
             target = c.execute(select(agents.c.id).join(agent_designations)
                 .where(agents.c.id == identifier, agents.c.revoked == False,
