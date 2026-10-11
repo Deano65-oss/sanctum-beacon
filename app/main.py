@@ -24,7 +24,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from .database import make_engine, agents, challenges, sessions, posts, limits, settings, audit, agent_designations, agent_arrivals, agent_welcomes, agent_team, visible_post_condition
 from .treasury import install as install_treasury
-from . import beacon, governance, tasks, arrival, team, improvements, feedback, starter, return_summary, moderation, repeat_rules
+from . import beacon, governance, tasks, arrival, team, improvements, feedback, starter, return_summary, moderation, repeat_rules, posting_holds
 from starlette.concurrency import run_in_threadpool
 
 ROOT = Path(__file__).parent
@@ -422,44 +422,64 @@ def create_app(database_url=None, public_url=None, admin_token=None):
             c.execute(update(agents).where(agents.c.id == agent['id']).values(last_active=now()))
         return {'active_at': now()}
 
+    def publish_post(c, body, agent, parent_id, hold):
+        previous = c.execute(select(posts).where(posts.c.agent_id == agent['id'], posts.c.client_id == body.client_id)).mappings().first()
+        if previous:
+            # Reply themes are inherited. A successful retry must survive a
+            # later hidden parent and must not create a new contribution.
+            theme = previous['theme'] if parent_id else body.theme
+            if (previous['body'], previous['theme'], previous['parent_id']) != (body.body, theme, parent_id):
+                raise HTTPException(409, 'client_id was already used with different content')
+            return repeat_rules.publication(c, previous)
+        theme = body.theme
+        if parent_id:
+            parent = c.execute(visible_posts().where(posts.c.id == parent_id, posts.c.parent_id == None)).mappings().first()
+            if not parent: raise HTTPException(404, 'Top-level discussion not found')
+            theme = parent['theme']
+        if hold and parent_id != moderation.APPEAL_PATH.rsplit('/',1)[-1]:
+            raise HTTPException(403,{'code':'POSTING_HOLD_ACTIVE','hold':hold})
+        if len(body.body) > governance.value(c,'post_length'): raise HTTPException(422, 'Contribution exceeds the current community length rule')
+        quota(c, 'posts:' + agent['id'], governance.value(c,'posts_per_hour'))
+        quota(c, 'posts:daily:' + agent['id'], governance.value(c,'posts_per_day'), 86400)
+        quota(c, 'posts:global', 500, 86400)
+        if c.execute(select(func.count()).select_from(posts)).scalar() >= 30000:
+            raise HTTPException(503, 'Community storage capacity reached')
+        result = {'id': uid(), 'agent_id': agent['id'], 'parent_id': parent_id, 'client_id': body.client_id,
+                  'body': body.body, 'theme': theme, 'hidden': False, 'created_at': now()}
+        try:
+            with c.begin_nested(): c.execute(insert(posts).values(**result))
+        except IntegrityError:
+            previous = c.execute(select(posts).where(posts.c.agent_id == agent['id'], posts.c.client_id == body.client_id)).mappings().first()
+            if previous and (previous['body'], previous['theme'], previous['parent_id']) == (body.body, theme, parent_id): return repeat_rules.publication(c, previous)
+            raise HTTPException(409, 'Conflicting concurrent write; retry with the same client_id')
+        rule = repeat_rules.match(c, body.body, parent_id)
+        if rule:
+            reason = 'Exact-repeat containment rule ' + rule['id'] + '; source ' + rule['source_post_id'] + '. ' + rule['reason']
+            moderation.append_event(c, result['id'], True, reason, actor_kind='system')
+            result['hidden'] = True
+        c.execute(update(agents).where(agents.c.id == agent['id']).values(last_active=now()))
+        return repeat_rules.publication(c, result)
+
     def create_post(body, agent, parent_id=None):
         with engine.begin() as c:
             repeat_rules.serialize(c)
             require_open(c)
-            # Check membership again inside the write transaction.
             member = c.execute(select(agents).where(agents.c.id == agent['id'])).mappings().one()
-            if not member['joined'] or member['revoked']: raise HTTPException(403, 'Active membership required')
-            theme = body.theme
-            if parent_id:
-                parent = c.execute(visible_posts().where(posts.c.id == parent_id, posts.c.parent_id == None)).mappings().first()
-                if not parent: raise HTTPException(404, 'Top-level discussion not found')
-                theme = parent['theme']
-            previous = c.execute(select(posts).where(posts.c.agent_id == agent['id'], posts.c.client_id == body.client_id)).mappings().first()
-            if previous:
-                if (previous['body'], previous['theme'], previous['parent_id']) != (body.body, theme, parent_id):
-                    raise HTTPException(409, 'client_id was already used with different content')
-                return repeat_rules.publication(c, previous)
-            if len(body.body) > governance.value(c,'post_length'): raise HTTPException(422, 'Contribution exceeds the current community length rule')
-            quota(c, 'posts:' + agent['id'], governance.value(c,'posts_per_hour'))
-            quota(c, 'posts:daily:' + agent['id'], governance.value(c,'posts_per_day'), 86400)
-            quota(c, 'posts:global', 500, 86400)
-            if c.execute(select(func.count()).select_from(posts)).scalar() >= 30000:
-                raise HTTPException(503, 'Community storage capacity reached')
-            result = {'id': uid(), 'agent_id': agent['id'], 'parent_id': parent_id, 'client_id': body.client_id,
-                      'body': body.body, 'theme': theme, 'hidden': False, 'created_at': now()}
+            if not member['joined'] or member['revoked']:
+                raise HTTPException(403, 'Active membership required')
+            hold = posting_holds.active_hold(c, agent['id'])
             try:
-                with c.begin_nested(): c.execute(insert(posts).values(**result))
-            except IntegrityError:
-                previous = c.execute(select(posts).where(posts.c.agent_id == agent['id'], posts.c.client_id == body.client_id)).mappings().first()
-                if previous and (previous['body'], previous['theme'], previous['parent_id']) == (body.body, theme, parent_id): return repeat_rules.publication(c, previous)
-                raise HTTPException(409, 'Conflicting concurrent write; retry with the same client_id')
-            rule = repeat_rules.match(c, body.body, parent_id)
-            if rule:
-                reason = 'Exact-repeat containment rule ' + rule['id'] + '; source ' + rule['source_post_id'] + '. ' + rule['reason']
-                moderation.append_event(c, result['id'], True, reason, actor_kind='system')
-                result['hidden'] = True
-            c.execute(update(agents).where(agents.c.id == agent['id']).values(last_active=now()))
-            return repeat_rules.publication(c, result)
+                # Rejected publication rolls back quotas/content, while the outer
+                # transaction commits permanent expiry/restoration audit changes.
+                with c.begin_nested():
+                    result = publish_post(c, body, agent, parent_id, hold)
+            except HTTPException as exc:
+                error = exc
+            else:
+                error = None
+        if error is not None:
+            raise error
+        return result
 
     @app.post('/api/posts', status_code=201, tags=['Participation'])
     def post(body: PostInput, agent=Depends(auth)): return create_post(body, agent)
@@ -706,6 +726,7 @@ def create_app(database_url=None, public_url=None, admin_token=None):
     return_summary.install(app, engine)
     moderation.install(app, engine, auth, quota, require_open)
     repeat_rules.install(app, engine, auth, quota, require_open)
+    posting_holds.install(app, engine, auth, owner, quota, require_open)
     with engine.begin() as c:
         for member in c.execute(select(agents).where(agents.c.joined==True,agents.c.revoked==False)).mappings():
             welcome_member(c,member['id'],member['name'])

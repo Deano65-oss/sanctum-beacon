@@ -45,6 +45,8 @@ def append_event(c, post_id, hidden, reason, actor_id=None, client_id=None, acto
     if not hidden:
         from .repeat_rules import source_restored
         source_restored(c, post_id)
+        from .posting_holds import invalidate_restored
+        invalidate_restored(c, post_id)
     return entry
 
 
