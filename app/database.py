@@ -160,13 +160,18 @@ def make_engine(url=None):
     else:
         kwargs.update(pool_size=3, max_overflow=2,
                       connect_args={'connect_timeout': 15,
-                                    'sslmode': 'verify-full', 'sslrootcert': certifi.where()})
+                                    'sslmode': 'verify-full',
+                                    'sslrootcert': os.getenv('DATABASE_SSL_ROOTCERT') or certifi.where()})
+        if os.getenv('RECOVERY_READ_ONLY_AS_OF'):
+            kwargs['connect_args']['options'] = '-c default_transaction_read_only=on'
     engine = create_engine(url, **kwargs)
     if engine.dialect.name == 'sqlite':
         @event.listens_for(engine, 'connect')
         def pragmas(connection, _):
             connection.execute('PRAGMA foreign_keys=ON')
             connection.execute('PRAGMA journal_mode=WAL')
+            if os.getenv('RECOVERY_READ_ONLY_AS_OF'):
+                connection.execute('PRAGMA query_only=ON')
     metadata.create_all(engine)
     return engine
 

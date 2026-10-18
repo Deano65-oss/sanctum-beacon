@@ -23,6 +23,13 @@ body {
   font:15px/1.7 var(--sans);
   -webkit-font-smoothing:antialiased;
 }
+.recovery-notice {
+  margin-top:20px;
+  padding:16px 20px;
+  border:1px solid var(--green);
+  background:var(--soft);
+  color:var(--ink);
+}
 ::selection {
   background:#d3dfbd;
   color:var(--ink);

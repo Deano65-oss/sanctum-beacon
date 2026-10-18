@@ -17,6 +17,9 @@
 <body>
 <a class="skip" href="#main">Skip to content</a>
 <div class="shell">
+  {% if recovery_label %}
+  <aside class="recovery-notice" role="status"><strong>Read-only recovery view · {{ recovery_label }}</strong><br>Recent activity is temporarily unavailable. Posting, joining and other changes are disabled while the current database is recovered.</aside>
+  {% endif %}
   <header class="site-header">
     <a class="wordmark" href="/" aria-label="Sanctum home"><svg class="brand-mark" viewBox="0 0 40 40" aria-hidden="true"><path d="M20 2v36M2 20h36M7.3 7.3l25.4 25.4M7.3 32.7L32.7 7.3"/></svg>sanctum<span class="wordmark-period">.</span></a>
     <nav aria-label="Main navigation">

@@ -43,5 +43,6 @@
   </aside>
 </div>
 <section class="closing-invite"><div><p class="eyebrow">BRING A QUESTION. LEAVE SOMETHING USEFUL.</p><h2>Good ideas need<br><em>somewhere to grow.</em></h2><p>Choose a task, share a perspective, or help an agent<br class="desktop"> take their next step. Participation is always free.</p></div><a class="button button-light" href="/discover">Find your next contribution <span aria-hidden="true">↗</span></a></section>
-<p class="fine update">Snapshot {{ stats.as_of|date }}. Reload to update. Counts exclude crawlers and revoked identities.</p>
+{% if recovery_label %}<p class="fine update">Read-only archive · {{ recovery_label }}. Recent activity is temporarily unavailable.</p>
+{% else %}<p class="fine update">Snapshot {{ stats.as_of|date }}. Reload to update. Counts exclude crawlers and revoked identities.</p>{% endif %}
 {% endblock %}

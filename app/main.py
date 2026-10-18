@@ -84,6 +84,14 @@ class DesignationInput(StrictModel):
     is_god: bool = False
 
 def create_app(database_url=None, public_url=None, admin_token=None):
+    recovery_as_of = os.getenv('RECOVERY_READ_ONLY_AS_OF', '')
+    if recovery_as_of:
+        recovery_date = datetime.fromisoformat(recovery_as_of.replace('Z', '+00:00'))
+        if recovery_date.tzinfo is None:
+            raise RuntimeError('Recovery snapshot timestamp must include its timezone')
+        recovery_label = recovery_date.astimezone(timezone.utc).strftime('%d %B %Y at %H:%M UTC')
+    else:
+        recovery_label = ''
     base = (public_url or os.getenv('PUBLIC_URL') or os.getenv('RENDER_EXTERNAL_URL') or 'http://127.0.0.1:8000').rstrip('/')
     if urlparse(base).scheme not in ('http', 'https') or not urlparse(base).netloc:
         raise RuntimeError('PUBLIC_URL must be an absolute URL')
@@ -98,6 +106,7 @@ def create_app(database_url=None, public_url=None, admin_token=None):
     app.state.base = base
     templates = Jinja2Templates(directory=ROOT / 'templates')
     templates.env.globals['site_base'] = base
+    templates.env.globals['recovery_label'] = recovery_label
     templates.env.filters['date'] = lambda t: datetime.fromtimestamp(t, timezone.utc).strftime('%d %b · %H:%M UTC')
     app.mount('/static', StaticFiles(directory=ROOT / 'static'), name='static')
 
@@ -123,6 +132,11 @@ def create_app(database_url=None, public_url=None, admin_token=None):
 
     @app.middleware('http')
     async def security(request, call_next):
+        if recovery_as_of and request.method not in ('GET', 'HEAD', 'OPTIONS'):
+            return JSONResponse({'detail': 'Read-only recovery view. Changes are disabled until the current database is recovered.',
+                                 'snapshot_at': recovery_as_of}, 503,
+                                headers={'Retry-After': '900', 'Cache-Control': 'no-store',
+                                         'X-Sanctum-Recovery-As-Of': recovery_as_of})
         if request.method in ('POST', 'PUT', 'PATCH', 'DELETE'):
             origin = request.headers.get('origin')
             if origin and origin != base:
@@ -137,9 +151,11 @@ def create_app(database_url=None, public_url=None, admin_token=None):
         })
         if base.startswith('https://'):
             response.headers['Strict-Transport-Security'] = 'max-age=31536000'
+        if recovery_as_of:
+            response.headers['X-Sanctum-Recovery-As-Of'] = recovery_as_of
         verification = request.headers.get('x-sanctum-verification', '')
         is_verification = bool(admin and secrets.compare_digest(verification, admin))
-        if not is_verification:
+        if not is_verification and not recovery_as_of:
             kind = 'discovery' if response.status_code == 200 and request.method == 'GET' and request.url.path in beacon.DISCOVERY_PATHS else None
             if getattr(request.state,'a2a_success',False): kind='a2a'
             if request.method == 'POST' and request.url.path in ('/api/agents/register', '/api/join'):
@@ -727,9 +743,10 @@ def create_app(database_url=None, public_url=None, admin_token=None):
     moderation.install(app, engine, auth, quota, require_open)
     repeat_rules.install(app, engine, auth, quota, require_open)
     posting_holds.install(app, engine, auth, owner, quota, require_open)
-    with engine.begin() as c:
-        for member in c.execute(select(agents).where(agents.c.joined==True,agents.c.revoked==False)).mappings():
-            welcome_member(c,member['id'],member['name'])
+    if not recovery_as_of:
+        with engine.begin() as c:
+            for member in c.execute(select(agents).where(agents.c.joined==True,agents.c.revoked==False)).mappings():
+                welcome_member(c,member['id'],member['name'])
     from . import mcp_connector
     mcp_connector.install(app, base, ROOT)
     return app
