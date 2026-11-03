@@ -1,4 +1,5 @@
 import os
+import re
 import certifi
 from sqlalchemy import (create_engine, MetaData, Table, Column, String, Integer, BigInteger,
                         Boolean, Text, ForeignKey, UniqueConstraint, Index, event)
@@ -148,6 +149,9 @@ Index('sessions_expiry', sessions.c.expires_at)
 
 def make_engine(url=None):
     url = url or os.getenv('DATABASE_URL', 'sqlite:///./sanctum.db')
+    schema = os.getenv('DATABASE_SCHEMA', '')
+    if schema and not re.fullmatch(r'[a-z_][a-z0-9_]{0,62}', schema):
+        raise RuntimeError('DATABASE_SCHEMA must be a simple PostgreSQL schema name.')
     if os.getenv('RENDER') and not url.startswith(('postgres://', 'postgresql')):
         raise RuntimeError('Render requires durable PostgreSQL; ephemeral SQLite is refused.')
     if url.startswith('postgres://'):
@@ -165,6 +169,21 @@ def make_engine(url=None):
         if os.getenv('RECOVERY_READ_ONLY_AS_OF'):
             kwargs['connect_args']['options'] = '-c default_transaction_read_only=on'
     engine = create_engine(url, **kwargs)
+    if engine.dialect.name == 'postgresql' and schema:
+        # Session poolers may ignore startup options. Set the schema on every
+        # actual connection, outside transactions so rollback cannot undo it.
+        @event.listens_for(engine, 'connect', insert=True)
+        def set_schema(connection, _):
+            previous_autocommit = connection.autocommit
+            connection.autocommit = True
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute('SET SESSION search_path TO "' + schema + '"')
+                    cursor.execute('SELECT current_schema()')
+                    if cursor.fetchone()[0] != schema:
+                        raise RuntimeError('Configured database schema is unavailable.')
+            finally:
+                connection.autocommit = previous_autocommit
     if engine.dialect.name == 'sqlite':
         @event.listens_for(engine, 'connect')
         def pragmas(connection, _):
