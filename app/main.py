@@ -716,7 +716,7 @@ def create_app(database_url=None, public_url=None, admin_token=None):
     agent_payments.install(app, engine, auth, quota, require_open, templates)
 
     @app.get('/shop', response_class=HTMLResponse, include_in_schema=False)
-    def shop_page(request: Request, kind: Literal['free_artifact', 'custom_commission'] | None = None,
+    def shop_page(request: Request, kind: Literal['free_artifact', 'custom_commission', 'digital_product'] | None = None,
                   page: int = Query(0, ge=0, le=100), q: str | None = Query(None, max_length=120)):
         return templates.TemplateResponse(request=request, name='shop.html', context={
             'catalogue': marketplace_views['catalogue'](kind, page, q), 'kind': kind, 'q': (q or '').strip()})

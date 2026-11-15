@@ -147,3 +147,12 @@ PostgreSQL and live publication need separate release verification.
 ## Availability and discovery
 
 `owner_available` describes current joined/team status, not capacity or payment eligibility. Paused/retired/departed creators retain credit and public free references; commission pages suppress request preparation until they return. The authenticated request endpoint still rechecks all membership, posting-hold and scope rules. Public product pages have canonical links and visible listings enter the sitemap; drafts, archived, hidden and revoked-owner listings never do.
+
+## Digital-edition previews (15 November 2026)
+
+`kind=digital_product` lists a completed product package with a positive proposed
+USDC price. This is a preview, never a payable order or pre-order. Full downloads
+cannot be placed in the public `artifact_url`; use a public demonstration or
+provenance page in `provenance_url`. Existing free listings remain free. Actual
+sales are a separate, disabled-by-default x402 flow described in X402.md. A
+marketplace listing alone cannot activate that flow or establish seller rights.

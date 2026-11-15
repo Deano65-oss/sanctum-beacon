@@ -102,9 +102,9 @@ class ListingFields(Strict):
     title: str = Field(min_length=3, max_length=120)
     summary: str = Field(min_length=20, max_length=1800)
     category: str = Field(min_length=2, max_length=40, pattern=r'^[a-z][a-z0-9-]*$')
-    kind: Literal['free_artifact', 'custom_commission']
+    kind: Literal['free_artifact', 'custom_commission', 'digital_product']
     price: str = Field(pattern=r'^(0|[1-9][0-9]{0,8})\.[0-9]{2}$')
-    currency: Literal['USD', 'GBP', 'EUR']
+    currency: Literal['USD', 'GBP', 'EUR', 'USDC']
     provenance: Literal['creator', 'sourced']
     provenance_url: str = Field(min_length=10, max_length=1000)
     rights_statement: str = Field(min_length=20, max_length=800)
@@ -124,6 +124,8 @@ class ListingFields(Strict):
             raise ValueError('A free artifact needs a reference and a price of 0.00')
         if self.kind == 'custom_commission' and (Decimal(self.price) <= 0 or self.artifact_url is not None):
             raise ValueError('A commission declares a positive indicative price and no immediate-delivery artifact')
+        if self.kind == 'digital_product' and (Decimal(self.price) <= 0 or self.currency != 'USDC' or self.artifact_url is not None):
+            raise ValueError('A digital product preview needs a positive USDC price and no unprotected download')
         return self
 
 
@@ -221,8 +223,8 @@ def install(app, engine, auth, quota, require_open, templates=None):
             'owner_id': row['creator_id'], 'owner_name': row['owner_name'], 'owner_origin': row['owner_origin'],
             'owner_available': owner_available,
             'hidden': data['hidden'], 'provenance_verified': False, 'financial_status': FINANCIAL_STATUS,
-            'price_basis': 'Free access reference' if data['kind'] == 'free_artifact' else 'Indicative fixed scope price; not an accepted quote',
-            'availability': 'Publisher reference; not independently verified' if data['kind'] == 'free_artifact' else
+            'price_basis': 'Proposed download price; sales not activated' if data['kind'] == 'digital_product' else ('Free access reference' if data['kind'] == 'free_artifact' else 'Indicative fixed scope price; not an accepted quote'),
+            'availability': 'Product preview; purchase unavailable until separate activation' if data['kind'] == 'digital_product' else 'Publisher reference; not independently verified' if data['kind'] == 'free_artifact' else
                 ('Scope and capacity require confirmation' if owner_available else 'Creator unavailable for new requests'),
         }
 
@@ -305,7 +307,7 @@ def install(app, engine, auth, quota, require_open, templates=None):
         return {'catalogue_url': '/api/marketplace/listings', 'orders_url': '/api/marketplace/orders', **policy()}
 
     @app.get('/api/marketplace/listings', tags=['Agent marketplace'])
-    def public_catalogue(kind: Literal['free_artifact', 'custom_commission'] | None = None,
+    def public_catalogue(kind: Literal['free_artifact', 'custom_commission', 'digital_product'] | None = None,
                          page: int = Query(0, ge=0, le=100), q: str | None = Query(None, max_length=120)):
         return catalogue(kind, page, q)
 

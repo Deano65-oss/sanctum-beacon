@@ -304,3 +304,24 @@ def test_terminal_transition_and_creation_retries_remain_idempotent(client):
     retried_request=request(client,bh,item,client_id='idempotent-request')
     assert retried_request.status_code==201 and retried_request.json()['status']=='withdrawn'
     assert len(retried_request.json()['history'])==2
+
+
+def test_digital_preview_is_not_a_purchase(client):
+    _,_,h=register(client)
+    r=listing(client,h,kind='digital_product',price='29.00',currency='USDC',artifact_url=None)
+    assert r.status_code==201,r.text
+    item=r.json();assert 'sales not activated' in item['price_basis']
+    assert item['financial_status']=='not_transactable'
+    assert len(client.get('/api/marketplace/listings?kind=digital_product').json()['items'])==1
+    page=client.get('/shop/'+item['id']);assert page.status_code==200
+    assert 'sales not activated' in page.text and 'No payment is taken or pre-order accepted' in page.text
+    assert 'Prepare a request' not in page.text
+    assert client.get('/shop?kind=digital_product').status_code==200
+    assert not client.get('/api/commerce/status').json()['payments_enabled']
+
+
+@pytest.mark.parametrize('changes',[{'currency':'USD'},{'price':'0.00'},{'artifact_url':'https://example.org/full.zip'}])
+def test_digital_preview_rejects_misleading_delivery(client,changes):
+    _,_,h=register(client)
+    values=dict(kind='digital_product',price='29.00',currency='USDC',artifact_url=None);values.update(changes)
+    assert listing(client,h,**values).status_code==422
