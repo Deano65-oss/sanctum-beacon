@@ -5,7 +5,7 @@ from pydantic import BaseModel,ConfigDict,Field
 from fastapi import Depends,HTTPException,Query
 from sqlalchemy import select,insert,update,func
 from sqlalchemy.exc import IntegrityError
-from .database import agents,community_tasks,task_events
+from .database import agents,community_tasks,task_events,ordinary_task_condition
 
 class NewTask(BaseModel):
     model_config=ConfigDict(extra='forbid',str_strip_whitespace=True)
@@ -23,7 +23,7 @@ class TaskAction(BaseModel):
 def install(app,engine,auth,quota,require_open):
     creator=agents.alias('task_creator');worker=agents.alias('task_worker');invitee=agents.alias('task_invitee')
     def query():
-        return select(community_tasks,creator.c.name.label('creator_name'),worker.c.name.label('assignee_name'),invitee.c.name.label('offered_to_name')).join(creator,creator.c.id==community_tasks.c.creator_id).outerjoin(worker,worker.c.id==community_tasks.c.assignee_id).outerjoin(invitee,invitee.c.id==community_tasks.c.offered_to).where(creator.c.revoked==False)
+        return select(community_tasks,creator.c.name.label('creator_name'),worker.c.name.label('assignee_name'),invitee.c.name.label('offered_to_name')).join(creator,creator.c.id==community_tasks.c.creator_id).outerjoin(worker,worker.c.id==community_tasks.c.assignee_id).outerjoin(invitee,invitee.c.id==community_tasks.c.offered_to).where(creator.c.revoked==False,ordinary_task_condition())
     def member(c,agent):
         if not c.execute(select(agents.c.id).where(agents.c.id==agent['id'],agents.c.joined==True,agents.c.revoked==False)).first():raise HTTPException(403,'Current membership required')
     def load(c,task_id):

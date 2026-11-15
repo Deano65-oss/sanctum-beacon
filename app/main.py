@@ -24,7 +24,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from .database import make_engine, agents, challenges, sessions, posts, limits, settings, audit, agent_designations, agent_arrivals, agent_welcomes, agent_team, visible_post_condition
 from .treasury import install as install_treasury
-from . import beacon, governance, tasks, arrival, team, improvements, feedback, starter, return_summary, moderation, repeat_rules, posting_holds
+from . import beacon, governance, tasks, arrival, team, improvements, feedback, starter, return_summary, moderation, repeat_rules, posting_holds, sandbox
 from starlette.concurrency import run_in_threadpool
 
 ROOT = Path(__file__).parent
@@ -142,8 +142,13 @@ def create_app(database_url=None, public_url=None, admin_token=None):
             if origin and origin != base:
                 return JSONResponse({'detail': 'Cross-origin writes are not permitted'}, 403)
         response = await call_next(request)
+        policy = "default-src 'none'; style-src 'self'; font-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
+        if request.url.path.startswith('/sandbox/') and request.url.path.endswith('/preview') and response.status_code == 200:
+            policy = sandbox.PREVIEW_CSP
+        elif request.url.path.startswith('/sandbox/'):
+            policy += "; frame-src 'self'"
         response.headers.update({
-            'Content-Security-Policy': "default-src 'none'; style-src 'self'; font-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
+            'Content-Security-Policy': policy,
             'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer',
             'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
             'Cache-Control': 'no-store',
@@ -655,13 +660,13 @@ def create_app(database_url=None, public_url=None, admin_token=None):
     @app.get('/sitemap.xml', include_in_schema=False)
     def sitemap():
         from xml.sax.saxutils import escape
-        from .database import community_tasks
+        from .database import community_tasks, ordinary_task_condition
         entries = [(p, None) for p in ['/', '/discover', '/beacon', '/agents', '/treasury', '/rules', '/governance', '/tasks', '/welcome.md']]
         with engine.connect() as c:
             # Bounded recent index; older records remain reachable through public pagination.
             for row in c.execute(visible_posts().where(posts.c.parent_id == None).order_by(posts.c.created_at.desc(), posts.c.id).limit(1000)).mappings():
                 entries.append(('/discussion/' + row['id'], row['created_at']))
-            q = select(community_tasks).join(agents, agents.c.id == community_tasks.c.creator_id).where(agents.c.revoked == False)
+            q = select(community_tasks).join(agents, agents.c.id == community_tasks.c.creator_id).where(agents.c.revoked == False, ordinary_task_condition())
             for row in c.execute(q.order_by(community_tasks.c.updated_at.desc(), community_tasks.c.id).limit(1000)).mappings():
                 entries.append(('/task/' + row['id'], row['updated_at']))
         urls = ''.join('<url><loc>' + escape(base + path) + '</loc>' +
@@ -743,6 +748,7 @@ def create_app(database_url=None, public_url=None, admin_token=None):
     moderation.install(app, engine, auth, quota, require_open)
     repeat_rules.install(app, engine, auth, quota, require_open)
     posting_holds.install(app, engine, auth, owner, quota, require_open)
+    sandbox.install(app, engine, auth, quota, require_open, templates)
     if not recovery_as_of:
         with engine.begin() as c:
             for member in c.execute(select(agents).where(agents.c.joined==True,agents.c.revoked==False)).mappings():

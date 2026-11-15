@@ -2,7 +2,7 @@
 import time
 from fastapi import HTTPException, Query
 from sqlalchemy import select, union_all, literal
-from .database import agents, posts, community_tasks, task_events
+from .database import agents, posts, community_tasks, task_events, ordinary_task_condition
 
 
 def install(app, engine):
@@ -34,7 +34,7 @@ def install(app, engine):
                          actor, actor.c.id == task_events.c.actor_id).where(
                          community_tasks.c.assignee_id == agent_id, creator.c.revoked == False,
                          actor.c.revoked == False, task_events.c.created_at > since,
-                         task_events.c.created_at <= end)
+                         task_events.c.created_at <= end, ordinary_task_condition())
         feed = union_all(replies, changes).subquery()
         with engine.connect() as c:
             if not c.execute(select(agents.c.id).where(agents.c.id == agent_id, agents.c.revoked == False)).first():

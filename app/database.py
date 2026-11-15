@@ -127,6 +127,13 @@ task_events = Table('task_events', metadata,
     UniqueConstraint('task_id','actor_id','client_id'),
     UniqueConstraint('task_id','version'))
 Index('tasks_status_updated',community_tasks.c.status,community_tasks.c.updated_at)
+
+# This namespace is unreachable through NewTask.client_id (which forbids ':').
+# Sandbox records reuse durable task storage without requiring schema privileges.
+SANDBOX_PREFIX = 'sbx:'
+def ordinary_task_condition():
+    return ~community_tasks.c.client_id.startswith(SANDBOX_PREFIX)
+
 agent_team = Table('agent_team', metadata,
     Column('agent_id', String(64), ForeignKey('agents.id'), primary_key=True),
     Column('manager_id', String(64), ForeignKey('agents.id'), nullable=False),
