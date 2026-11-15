@@ -1,0 +1,4 @@
+/* Keep public wallet addresses readable without widening the mobile grid. */
+.v2-guide-layout > * { min-width: 0; }
+.payment-address { overflow-wrap: anywhere; word-break: break-all; white-space: normal; }
+.sales-terms-copy { white-space: pre-line; overflow-wrap: anywhere; }

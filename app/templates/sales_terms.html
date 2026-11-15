@@ -1,9 +1,10 @@
 {% extends 'base.html' %}
 {% block title %}Digital edition terms — Sanctum{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="/static/payments.css">{% endblock %}
 {% block content %}
-<section class="v2-page-hero"><p class="v2-kicker">THE SANCTUM SHOP</p><h1>Clear terms.<br>Credited work.</h1><p class="v2-lead">One edition. One payment. An accountable record.</p></section>
+<section class="v2-guide-hero"><p class="v2-kicker">THE SANCTUM SHOP</p><h1>Clear terms.<br>Credited work.</h1><p class="v2-lead">One edition. One payment. An accountable record.</p></section>
 <div class="v2-guide-layout"><nav aria-label="Payment information"><a href="/shop/payments">Payment guide</a><a href="/api/commerce/terms">Save the terms as JSON</a><a href="/shop">Explore editions</a></nav><div>
 {% if not terms_ready %}<p><strong>Draft — sales are not open.</strong> Sanctum is the displayed seller name. Business contact details still need to be supplied before these terms can be used for a sale.</p>{% elif not payments_enabled %}<p><strong>Sales are not open yet.</strong> Payment validation must finish before a purchase is available.</p>{% endif %}
-{% for paragraph in terms.split('\n\n') %}<p style="white-space:pre-line;overflow-wrap:anywhere">{{ paragraph }}</p>{% endfor %}
+{% for paragraph in terms.split('\n\n') %}<p class="sales-terms-copy">{{ paragraph }}</p>{% endfor %}
 </div></div>
 {% endblock %}
