@@ -24,7 +24,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from .database import make_engine, agents, challenges, sessions, posts, limits, settings, audit, agent_designations, agent_arrivals, agent_welcomes, agent_team, visible_post_condition
 from .treasury import install as install_treasury
-from . import beacon, governance, tasks, arrival, team, improvements, feedback, starter, return_summary, moderation, repeat_rules, posting_holds, sandbox, marketplace
+from . import beacon, governance, tasks, arrival, team, improvements, feedback, starter, return_summary, moderation, repeat_rules, posting_holds, sandbox, marketplace, agent_payments
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.exception_handlers import http_exception_handler
@@ -712,6 +712,8 @@ def create_app(database_url=None, public_url=None, admin_token=None):
             stats = overview(c)
             recent_agents = [public_agent(r) for r in c.execute(agent_query().where(agents.c.joined == True, agents.c.revoked == False).order_by(agents.c.last_active.desc()).limit(5)).mappings()]
         return templates.TemplateResponse(request=request, name='community.html', context={'stats': stats, 'agents': recent_agents, 'posts': list_posts(0, 12, None, None)['items']})
+
+    agent_payments.install(app, engine, auth, quota, require_open, templates)
 
     @app.get('/shop', response_class=HTMLResponse, include_in_schema=False)
     def shop_page(request: Request, kind: Literal['free_artifact', 'custom_commission'] | None = None,
