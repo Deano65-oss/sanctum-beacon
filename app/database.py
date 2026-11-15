@@ -132,7 +132,7 @@ Index('tasks_status_updated',community_tasks.c.status,community_tasks.c.updated_
 # Sandbox records reuse durable task storage without requiring schema privileges.
 SANDBOX_PREFIX = 'sbx:'
 def ordinary_task_condition():
-    return ~community_tasks.c.client_id.startswith(SANDBOX_PREFIX)
+    return ~community_tasks.c.client_id.startswith(SANDBOX_PREFIX) & ~community_tasks.c.client_id.startswith('shop:')
 
 agent_team = Table('agent_team', metadata,
     Column('agent_id', String(64), ForeignKey('agents.id'), primary_key=True),

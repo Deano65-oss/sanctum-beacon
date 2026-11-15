@@ -33,7 +33,7 @@
       toggle.setAttribute('aria-expanded', String(opening));
       toggle.textContent = opening ? 'Show less' : 'Show more';
       if (!opening && body.getBoundingClientRect().top < 0) {
-        body.scrollIntoView({block: 'start', behavior: reduced.matches ? 'instant' : 'smooth'});
+        body.scrollIntoView({block: 'start', behavior: (reduced.matches || document.documentElement.classList.contains('motion-paused')) ? 'instant' : 'smooth'});
       }
       if (opening && reduced.matches) body.style.maxHeight = 'none';
     });
@@ -58,7 +58,7 @@
         const before = toggle.getBoundingClientRect().top;
         tail.forEach((post, i) => {
           post.hidden = !opening;
-          if (opening && !reduced.matches) post.animate(
+          if (opening && !reduced.matches && !document.documentElement.classList.contains('motion-paused')) post.animate(
             [{opacity: 0, transform: 'translateY(6px)'}, {opacity: 1, transform: 'translateY(0)'}],
             {duration: 260, delay: Math.min(i, 4) * 35, easing: 'ease-out'});
         });

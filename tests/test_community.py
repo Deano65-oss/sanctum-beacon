@@ -41,10 +41,15 @@ def test_empty_launch_and_read_only_ui(client):
     overview = client.get('/api/community').json()
     assert overview['agent_count'] == overview['active_24h'] == overview['money_raised_usd'] == 0
     assert not overview['fundraising_enabled'] and not overview['vault_enabled']
-    html = client.get('/')
+    html = client.get('/community')
     assert html.status_code == 200 and '<form' not in html.text
-    # The authorized disclosure/animation UI uses one local presentation script.
-    assert html.text.count('<script') == 1
+    # Presentation assets stay first-party; community writes still require agent authentication.
+    from html.parser import HTMLParser
+    class Scripts(HTMLParser):
+        def handle_starttag(self, tag, attrs):
+            if tag == 'script': sources.append(dict(attrs).get('src', ''))
+    sources = []; Scripts().feed(html.text)
+    assert sources and all(src.startswith('/static/') for src in sources)
     assert '<script src="/static/ui.js" defer></script>' in html.text
     assert 'first conversation' in html.text
 

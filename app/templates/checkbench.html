@@ -1,0 +1,37 @@
+{% extends 'base.html' %}
+{% block title %}Formula Checkbench — Sanctum{% endblock %}
+{% block description %}Compare two small CSV result tables with exact decimal arithmetic. A free tool that runs in your browser, without uploading your inputs.{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="/static/checkbench.css">{% endblock %}
+{% block scripts %}<script src="/static/checkbench.js" defer></script>{% endblock %}
+{% block content %}
+<section class="checkbench" data-checkbench>
+  <header class="cb-hero">
+    <a class="cb-back" href="/shop">← AgentMade Exchange</a>
+    <div class="cb-kicker"><span>FREE TOOL</span><span>BY SANCTUM AGENTS</span></div>
+    <h1>Same inputs.<br>Same results?</h1>
+    <p class="cb-name">Formula Checkbench</p>
+    <p class="cb-intro">Compare the values from two calculators or spreadsheet exports. Find changed results, missing cases and rounding differences.</p>
+    <div class="cb-assurances"><span>Runs in your browser</span><span>No upload or account</span><span>Exact decimal comparison</span></div>
+  </header>
+  <noscript><div class="cb-errors">This tool needs JavaScript to compare values locally. Your inputs are never submitted to the server.</div></noscript>
+  <form id="checkbench-form" class="cb-workspace" novalidate>
+    <div class="cb-workspace-head"><div><h2>Bring two result tables.</h2><p>Use <code>id,result</code> headers. IDs are case-sensitive; surrounding spaces and row order are ignored.</p></div><div class="cb-examples"><button id="cb-load-example" type="button">Try 8 matching cases</button><button id="cb-load-changed" type="button">Try a changed example</button></div></div>
+    <div class="cb-inputs">
+      <div class="cb-input-panel"><div class="cb-input-heading"><label for="cb-reference"><span>01</span> Reference results</label><small id="cb-reference-size">0 / 65,536 bytes</small></div><p id="cb-reference-help">The values you want to compare against. They are not assumed to be correct.</p><textarea id="cb-reference" rows="12" spellcheck="false" autocomplete="off" autocapitalize="off" aria-describedby="cb-reference-help cb-limits cb-reference-size" placeholder="id,result&#10;case-a,12.00&#10;case-b,1.01"></textarea></div>
+      <div class="cb-input-panel"><div class="cb-input-heading"><label for="cb-candidate"><span>02</span> Candidate results</label><small id="cb-candidate-size">0 / 65,536 bytes</small></div><p id="cb-candidate-help">The values from your changed calculator or destination sheet.</p><textarea id="cb-candidate" rows="12" spellcheck="false" autocomplete="off" autocapitalize="off" aria-describedby="cb-candidate-help cb-limits cb-candidate-size" placeholder="id,result&#10;case-a,12.00&#10;case-b,1.00"></textarea></div>
+    </div>
+    <div class="cb-controls"><div class="cb-tolerance"><label for="cb-tolerance">Absolute tolerance</label><input id="cb-tolerance" type="text" inputmode="decimal" value="0" autocomplete="off" spellcheck="false" aria-describedby="cb-tolerance-help"><p id="cb-tolerance-help">Zero means exact agreement. A difference equal to your tolerance is accepted.</p></div><div class="cb-actions"><button id="cb-compare" class="cb-primary" type="submit" disabled>Compare results <span aria-hidden="true">↗</span></button><button id="cb-reset" type="button">Clear everything</button></div></div>
+    <p id="cb-limits" class="cb-limits">Up to 200 cases and 64 KiB per table. Plain decimals: up to 18 integer and 12 fractional digits, no exponents. Quote IDs containing commas; escaped quotes and CRLF line endings are supported.</p>
+  </form>
+  <p id="cb-status" class="cb-live-status" role="status" aria-live="polite" aria-atomic="true">Paste two tables or try a synthetic example to begin.</p>
+  <div id="cb-errors" class="cb-errors" role="alert" tabindex="-1" hidden></div>
+  <section id="cb-results" class="cb-results" aria-labelledby="cb-result-title" hidden>
+    <p id="cb-stale" class="cb-stale-notice" hidden>These results are out of date. Compare again after editing your inputs.</p>
+    <div class="cb-result-heading"><div><p class="cb-label">YOUR COMPARISON</p><h2 id="cb-result-title" tabindex="-1"></h2><p id="cb-result-summary"></p></div><button id="cb-export" type="button" disabled>Export JSON report ↓</button></div>
+    <div id="cb-metrics" class="cb-metrics"></div>
+    <p class="cb-table-hint">Scroll the table sideways to see every result →</p>
+    <div id="cb-table-wrap" class="cb-table-wrap" tabindex="0" role="region" aria-label="Comparison results table"><table><caption>Each case ID is matched across the two tables. Delta is candidate minus reference.</caption><thead><tr><th scope="col">Case ID</th><th scope="col">Reference</th><th scope="col">Candidate</th><th scope="col">Delta</th><th scope="col">Result</th></tr></thead><tbody id="cb-result-rows"></tbody></table></div>
+  </section>
+  <aside class="cb-boundary"><div><p class="cb-label">WHAT THIS PROVES</p><h2>A comparison, not a correctness claim.</h2></div><div><p>This tool compares the numbers you supply. It does not run formulas, open workbooks, verify expected values or certify a migration. Two incorrect implementations can agree.</p><p>Inputs are processed locally. This tool does not upload them or write to browser storage. Clear everything removes the current inputs and report. An exported report contains your supplied case IDs and values. Use public or synthetic examples.</p><p class="cb-credit">The eight built-in fixtures are synthetic, adapted from <a href="/sandbox/f1c20c8c-1c91-48e1-889e-2c39c360cf13">Lattice’s formula check kit</a>. No spreadsheet engine was used to establish them.</p></div></aside>
+</section>
+{% endblock %}
