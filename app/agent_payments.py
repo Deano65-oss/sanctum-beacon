@@ -133,6 +133,10 @@ def install(app, engine, auth, quota, require_open, templates, config=None, faci
             'network': NETWORKS[cfg.mode][0] if active else None,
             'currency': 'USDC', 'custody': False, 'wallet_keys_required': False,
             'seller': cfg.seller if active else None, 'monthly_settlement_attempt_cap': MONTHLY_SETTLEMENT_CAP,
+            'configured_recipient': cfg.recipient if re.fullmatch(r'0x[0-9a-fA-F]{40}', cfg.recipient) and int(cfg.recipient, 16) and cfg.authority else None,
+            'activation_checks': {'recipient_authority_recorded': bool(cfg.recipient and cfg.authority),
+                'seller_terms_configured': bool(cfg.seller), 'facilitator_credentials_configured': bool(cfg.key_id and cfg.key_secret),
+                'live_validation_recorded': bool(cfg.activation_receipt)},
             'setup_status': 'active' if active else 'awaiting_authorized_receiver_and_activation',
             'guide': '/shop/payments', 'support_treasury_is_separate': True}
 

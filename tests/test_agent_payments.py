@@ -61,7 +61,7 @@ def test_disabled_no_schema_or_network(tmp_path,monkeypatch):
   assert not c.get('/api/commerce/status').json()['payments_enabled']
   assert c.get('/api/commerce/products').json()['items']==[]
   assert 'sales are not activated' in c.get('/shop/payments').text
-  assert 'Prove control without a payment' in c.get('/shop/payments/receiver').text
+  assert 'prove control without a payment' in c.get('/shop/payments/receiver').text
   _,_,h=register(c);assert c.get('/api/commerce/orders/missing/download',headers=h).status_code==503
  assert not ap.inspect(app.state.engine).has_table('sales_orders');app.state.engine.dispose()
 def test_live_gate():
@@ -148,3 +148,18 @@ def test_finalized_rpc_transfer_and_nonce():
 def test_bad_header():
  with pytest.raises(ValueError):decode_header('!')
  with pytest.raises(ValueError):decode_header(base64.b64encode(b'{"a":1,"a":2}').decode())
+
+
+def test_disabled_receiver_configuration_visible_without_secrets(tmp_path,monkeypatch):
+ monkeypatch.setenv('SANCTUM_X402_MODE','disabled')
+ monkeypatch.setenv('SANCTUM_X402_RECIPIENT',RECIPIENT)
+ monkeypatch.setenv('SANCTUM_X402_AUTHORITY','synthetic-attestation')
+ monkeypatch.setenv('SANCTUM_CDP_API_KEY_SECRET','must-not-be-returned')
+ app=create_app('sqlite:///'+str(tmp_path/'configured.db'),'http://testserver',ADMIN)
+ with TestClient(app) as c:
+  r=c.get('/api/commerce/status');d=r.json()
+  assert d['configured_recipient']==RECIPIENT and not d['payments_enabled']
+  assert d['activation_checks']['recipient_authority_recorded']
+  assert 'must-not-be-returned' not in r.text
+  assert 'A receiving address has been selected' in c.get('/shop/payments').text
+ app.state.engine.dispose()
