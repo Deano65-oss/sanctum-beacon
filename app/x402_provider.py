@@ -1,4 +1,4 @@
-"""Receive-only x402/CDP adapter. Never creates wallets or signs wallet transfers."""
+"""Receive-only x402 adapters. Never create wallets or sign wallet transfers."""
 import base64
 import json
 import re
@@ -12,7 +12,7 @@ ORIGIN = 'https://api.cdp.coinbase.com'
 ROUTE = '/platform/v2/x402'
 NETWORKS = {
     'testnet': ('eip155:84532', '0x036CbD53842c5426634e7929541eC2318f3dCF7e', 'https://sepolia.base.org'),
-    'live': ('eip155:8453', '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', 'https://mainnet.base.org'),
+    'live': ('eip155:8453', '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', 'https://base-rpc.publicnode.com'),
 }
 TRANSFER = '0x' + keccak(text='Transfer(address,address,uint256)').hex()
 USED = '0x' + keccak(text='AuthorizationUsed(address,bytes32)').hex()
@@ -99,6 +99,58 @@ class CdpFacilitator:
         return model.model_validate_json(raw).model_dump(by_alias=True, exclude_none=True)
 
 
+class PayAIFacilitator:
+    """Credential-free exact payments only; no account, top-up or paid fallback."""
+    origin = 'https://facilitator.payai.network'
+
+    def __init__(self, transport=None):
+        self.transport = transport
+
+    def request(self, operation, body=None, params=None):
+        if operation not in ('supported', 'free-credits', 'verify', 'settle'):
+            raise ValueError('Unsupported facilitator operation')
+        with httpx.Client(timeout=25, follow_redirects=False, trust_env=False, transport=self.transport) as client:
+            with client.stream('POST' if operation in ('verify', 'settle') else 'GET',
+                               self.origin + '/' + operation, json=body, params=params) as response:
+                response.raise_for_status()
+                raw = bytearray()
+                for chunk in response.iter_bytes():
+                    raw.extend(chunk)
+                    if len(raw) > 65536:
+                        raise ValueError('Facilitator response exceeds limit')
+        result = json.loads(raw)
+        if not isinstance(result, dict):
+            raise ValueError('Invalid facilitator response')
+        return result
+
+    def free_available(self, recipient):
+        data = self.request('free-credits', params={'payTo': recipient, 'network': 'eip155:8453'})
+        return (data.get('payTo', '').lower() == recipient.lower()
+                and data.get('network') == 'eip155:8453'
+                and data.get('status') == 'available' and data.get('exhausted') is False)
+
+    def call(self, operation, payload=None, requirements=None):
+        from x402.schemas import VerifyRequest, VerifyResponse, SettleResponse, SupportedResponse
+        if operation == 'supported':
+            return SupportedResponse.model_validate(self.request(operation)).model_dump(by_alias=True, exclude_none=True)
+        if operation not in ('verify', 'settle'):
+            raise ValueError('Unsupported facilitator operation')
+        network = requirements.get('network')
+        expected = next((v for v in NETWORKS.values() if v[0] == network), None)
+        if (not expected or requirements.get('scheme') != 'exact'
+                or requirements.get('asset', '').lower() != expected[1].lower()
+                or payload.get('x402Version') != 2):
+            raise ValueError('Only exact v2 native Base USDC is supported')
+        # Unauthenticated settlements fail at the provider when free credits run out.
+        # Also stop early on low/unknown credit status. Never follow a top-up link.
+        if network == NETWORKS['live'][0] and not self.free_available(requirements['payTo']):
+            raise ValueError('Free settlement allowance unavailable; do not pay')
+        body = VerifyRequest.model_validate({'x402Version': 2, 'paymentPayload': payload,
+            'paymentRequirements': requirements}).model_dump(by_alias=True, exclude_none=True)
+        model = VerifyResponse if operation == 'verify' else SettleResponse
+        return model.model_validate(self.request(operation, body)).model_dump(by_alias=True, exclude_none=True)
+
+
 class BaseReceiptReader:
     """Read-only public RPC. No transaction submission method or credentials."""
     def __init__(self, mode, transport=None):
@@ -123,6 +175,8 @@ class BaseReceiptReader:
     def confirm(self, tx, order):
         if not re.fullmatch(r'0x[0-9a-fA-F]{64}', tx):
             raise ValueError('Invalid transaction hash')
+        if order['network'] != self.network or order['token'].lower() != self.token.lower():
+            raise ValueError('Order is not for this native token and network')
         if int(self.rpc('eth_chainId', []), 16) != int(order['network'].split(':')[1]):
             raise ValueError('Wrong chain')
         receipt = self.rpc('eth_getTransactionReceipt', [tx])

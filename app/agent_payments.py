@@ -20,7 +20,8 @@ from sqlalchemy.exc import IntegrityError
 from . import moderation, posting_holds
 from .database import agents
 from .sales_database import products, orders, budgets
-from .x402_provider import NETWORKS, CdpFacilitator, BaseReceiptReader, encode_header, decode_header, validate_payload
+from . import sales_terms
+from .x402_provider import NETWORKS, CdpFacilitator, PayAIFacilitator, BaseReceiptReader, encode_header, decode_header, validate_payload
 
 MONTHLY_SETTLEMENT_CAP = 100
 
@@ -37,6 +38,9 @@ class Configuration:
     key_id: str = ''
     key_secret: str = ''
     activation_receipt: str = ''
+    provider: str = 'cdp'
+    seller_email: str = ''
+    seller_address: str = ''
 
     @classmethod
     def environment(cls):
@@ -44,12 +48,20 @@ class Configuration:
             ('SANCTUM_X402_MODE', 'disabled'), ('SANCTUM_X402_RECIPIENT', ''),
             ('SANCTUM_X402_SELLER', ''), ('SANCTUM_X402_AUTHORITY', ''),
             ('SANCTUM_CDP_API_KEY_ID', ''), ('SANCTUM_CDP_API_KEY_SECRET', ''),
-            ('SANCTUM_X402_ACTIVATION_RECEIPT', '')]])
+            ('SANCTUM_X402_ACTIVATION_RECEIPT', ''), ('SANCTUM_X402_PROVIDER', 'cdp'),
+            ('SANCTUM_SALES_CONTACT_EMAIL', ''), ('SANCTUM_SALES_SERVICE_ADDRESS', '')]])
+
+    def provider_configured(self):
+        return self.provider == 'payai' or (self.provider == 'cdp' and bool(self.key_id and self.key_secret))
+
+    def seller_configured(self):
+        return bool(self.seller and re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+', self.seller_email)
+                    and self.seller_address.strip())
 
     def configured(self):
         return bool(self.mode in NETWORKS and re.fullmatch(r'0x[0-9a-fA-F]{40}', self.recipient)
-            and int(self.recipient, 16) and self.seller and self.authority and self.key_id and self.key_secret
-            and (self.mode != 'live' or self.activation_receipt))
+            and int(self.recipient, 16) and self.seller and self.authority and self.provider_configured()
+            and (self.mode != 'live' or (self.activation_receipt and self.seller_configured())))
 
 
 class Strict(BaseModel):
@@ -79,6 +91,11 @@ class Reconcile(Strict):
 
 def install(app, engine, auth, quota, require_open, templates, config=None, facilitator=None, reader=None):
     cfg = config or Configuration.environment()
+    def provider_instance():
+        return facilitator or (PayAIFacilitator() if cfg.provider == 'payai' else CdpFacilitator(cfg.key_id, cfg.key_secret))
+
+    def general_terms():
+        return sales_terms.text(cfg.seller, cfg.seller_email, cfg.seller_address)
     def ready():
         return cfg.configured() and all(inspect(engine).has_table(t.name) for t in (products, orders, budgets))
 
@@ -133,12 +150,49 @@ def install(app, engine, auth, quota, require_open, templates, config=None, faci
             'network': NETWORKS[cfg.mode][0] if active else None,
             'currency': 'USDC', 'custody': False, 'wallet_keys_required': False,
             'seller': cfg.seller if active else None, 'monthly_settlement_attempt_cap': MONTHLY_SETTLEMENT_CAP,
+            'displayed_seller': cfg.seller or None, 'facilitator': cfg.provider,
+            'ledger_reader': 'PublicNode (Base mainnet)',
             'configured_recipient': cfg.recipient if re.fullmatch(r'0x[0-9a-fA-F]{40}', cfg.recipient) and int(cfg.recipient, 16) and cfg.authority else None,
             'activation_checks': {'recipient_authority_recorded': bool(cfg.recipient and cfg.authority),
-                'seller_terms_configured': bool(cfg.seller), 'facilitator_credentials_configured': bool(cfg.key_id and cfg.key_secret),
+                'seller_terms_configured': cfg.seller_configured(), 'facilitator_configured': cfg.provider_configured(),
+                'facilitator_credentials_required': cfg.provider == 'cdp',
+                'facilitator_credentials_configured': bool(cfg.key_id and cfg.key_secret),
                 'live_validation_recorded': bool(cfg.activation_receipt)},
-            'setup_status': 'active' if active else 'awaiting_authorized_receiver_and_activation',
-            'guide': '/shop/payments', 'support_treasury_is_separate': True}
+            'setup_status': 'active' if active else ('awaiting_seller_details_and_validation' if cfg.recipient and cfg.authority else 'awaiting_receiver'),
+            'guide': '/shop/payments', 'terms_url': '/shop/payments/terms', 'support_treasury_is_separate': True}
+
+    @app.get('/shop/payments/terms', include_in_schema=False)
+    def terms_page(request: Request):
+        return templates.TemplateResponse(request=request, name='sales_terms.html', context={
+            'terms': general_terms(), 'terms_ready': cfg.seller_configured(), 'payments_enabled': ready()})
+
+    @app.get('/api/commerce/terms')
+    def terms_document():
+        body = general_terms()
+        return {'version': sales_terms.VERSION, 'text': body, 'sha256': sha(body.encode()),
+                'seller_details_complete': cfg.seller_configured(), 'payments_enabled': ready()}
+
+    @app.post('/api/commerce/preflight')
+    def preflight(actor=Depends(auth)):
+        # Owner-triggered read-only diagnostics, not a recurring worker or a payment.
+        with engine.begin() as c:
+            member(c, actor); moderation.require_god(c, actor['id'])
+            quota(c, 'sales:preflight', 4, 3600)
+        result = {'facilitator': cfg.provider, 'real_settlement_tested': False}
+        try:
+            provider = provider_instance()
+            kinds = provider.call('supported').get('kinds', [])
+            result['base_exact_v2_supported'] = any(k.get('network') == 'eip155:8453'
+                and k.get('scheme') == 'exact' and k.get('x402Version') == 2 for k in kinds)
+            if cfg.provider == 'payai':
+                result['free_allowance_available'] = provider.free_available(cfg.recipient)
+            rpc = reader or BaseReceiptReader('live')
+            result['ledger_chain_verified'] = int(rpc.rpc('eth_chainId', []), 16) == 8453
+            block = rpc.rpc('eth_getBlockByNumber', ['finalized', False])
+            result['finalized_block_read'] = {'number': int(block['number'], 16), 'hash': block['hash']}
+        except Exception:
+            result['connection_check_failed'] = True
+        return result
 
     @app.get('/shop/payments', include_in_schema=False)
     def page(request: Request):
@@ -161,6 +215,7 @@ def install(app, engine, auth, quota, require_open, templates, config=None, faci
     @app.post('/api/commerce/products', status_code=201)
     def publish(body: NewProduct, actor=Depends(auth)):
         enabled()
+        contract_terms = (general_terms() + '\nProduct-specific terms:\n' + body.terms) if cfg.mode == 'live' else body.terms
         try:
             content = base64.b64decode(body.content_base64, validate=True)
         except ValueError:
@@ -175,13 +230,13 @@ def install(app, engine, auth, quota, require_open, templates, config=None, faci
             existing = c.execute(select(products).where(products.c.id == body.id)).mappings().first()
             if existing:
                 if (existing['sha256'], existing['amount'], existing['terms'], existing['title'], existing['creator_id']) != (
-                        body.sha256, body.amount_micro_usdc, body.terms, body.title, body.creator_id):
+                        body.sha256, body.amount_micro_usdc, contract_terms, body.title, body.creator_id):
                     raise HTTPException(409, 'Product versions are immutable; use a new ID')
                 return {'id': body.id, 'replayed': True}
             if c.execute(select(func.count()).select_from(products)).scalar_one() >= 5:
                 raise HTTPException(409, 'Initial product capacity reached')
             c.execute(insert(products).values(id=body.id, title=body.title, creator_id=body.creator_id,
-                amount=body.amount_micro_usdc, sha256=body.sha256, terms=body.terms, content=content, status='listed'))
+                amount=body.amount_micro_usdc, sha256=body.sha256, terms=contract_terms, content=content, status='listed'))
         return {'id': body.id, 'sha256': body.sha256}
 
     @app.post('/api/commerce/orders', status_code=201)
@@ -193,13 +248,15 @@ def install(app, engine, auth, quota, require_open, templates, config=None, faci
             if existing:
                 if (existing['product_id'], existing['payer'], existing['terms_hash']) != (body.product_id, body.payer.lower(), body.terms_hash):
                     raise HTTPException(409, 'Idempotency key already used for another request')
-                return view(existing)
+                return view(existing) | {'terms': artifact(c, existing)['terms']}
             quota(c, 'sales:orders:' + actor['id'], 5, 86400)
             if c.execute(select(func.count()).select_from(orders)).scalar_one() >= 1000:
                 raise HTTPException(503, 'Initial order capacity reached')
             p = c.execute(select(products).where(products.c.id == body.product_id, products.c.status == 'listed')).mappings().first()
             if not p or sha(p['content']) != p['sha256']:
                 raise HTTPException(404, 'Product unavailable')
+            if cfg.mode == 'live' and not p['terms'].startswith(general_terms() + '\nProduct-specific terms:\n'):
+                raise HTTPException(409, 'Seller terms changed; a new product version is required')
             if sha(p['terms'].encode()) != body.terms_hash or int(body.payer, 16) == 0:
                 raise HTTPException(409, 'Current terms and a valid payer are required')
             network, token, _ = NETWORKS[cfg.mode]
@@ -210,13 +267,14 @@ def install(app, engine, auth, quota, require_open, templates, config=None, faci
                 'expires_at': int(time.time()) + 900, 'status': 'awaiting', 'tx_hash': None,
                 'delivered_at': None, 'accepted_at': None}
             c.execute(insert(orders).values(**order))
-        return view(order)
+        return view(order) | {'terms': p['terms']}
 
     @app.get('/api/commerce/orders/{oid}')
     def read(oid: str, actor=Depends(auth)):
         enabled()
         with engine.connect() as c:
-            return view(order_for(c, oid, actor))
+            order = order_for(c, oid, actor)
+            return view(order) | {'terms': artifact(c, order)['terms']}
 
     def reconcile_tx(oid, actor, tx):
         with engine.connect() as c:
@@ -254,6 +312,13 @@ def install(app, engine, auth, quota, require_open, templates, config=None, faci
         with engine.begin() as c:
             member(c, actor); quota(c, 'sales:downloads:' + actor['id'], 30)
             order = order_for(c, oid, actor); p = artifact(c, order)
+        if order['status'] in ('settling', 'review') and order['tx_hash']:
+            try:
+                if reconcile_tx(oid, actor, order['tx_hash']):
+                    with engine.connect() as c:
+                        order = order_for(c, oid, actor)
+            except HTTPException:
+                pass  # Still uncertain: return pending below, never repeat settlement.
         if order['status'] == 'paid':
             with engine.begin() as c:
                 c.execute(update(orders).where(orders.c.id == oid).values(delivered_at=order['delivered_at'] or int(time.time())))
@@ -280,7 +345,7 @@ def install(app, engine, auth, quota, require_open, templates, config=None, faci
             nonce = validate_payload(payload, required, order['payer'], int(time.time()))
         except Exception:
             raise HTTPException(422, 'Invalid payment or order wallet proof')
-        provider = facilitator or CdpFacilitator(cfg.key_id, cfg.key_secret)
+        provider = provider_instance()
         try:
             verification = provider.call('verify', payload, required)
             if verification.get('isValid') is not True or verification.get('payer', '').lower() != order['payer']:
