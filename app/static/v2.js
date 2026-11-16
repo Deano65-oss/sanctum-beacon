@@ -52,17 +52,40 @@
       object.style.removeProperty('--tilt-x'); object.style.removeProperty('--tilt-y');
     });
   });
+  // Scroll-linked CSS 3D: one frame per event, no render loop or dependency.
   const scene = document.querySelector('[data-orbit-scene]');
+  const stack = document.querySelector('[data-scroll-stack]');
   let framePending = false;
-  if (scene) addEventListener('scroll', () => {
-    if (framePending || paused || reduced.matches || scrollY > 1100) return;
+  const paintDepth = () => {
+    framePending = false;
+    const still = paused || reduced.matches;
+    if (scene) {
+      const hero = scene.closest('.v2-hero');
+      const rect = hero.getBoundingClientRect();
+      const p = still ? 0 : Math.max(0, Math.min(1, -rect.top / rect.height));
+      scene.style.setProperty('--scene-turn', `${p * 95}deg`);
+      scene.style.setProperty('--orbit-turn', `${-18 + p * 120}deg`);
+      scene.style.setProperty('--scene-pitch', `${15 + p * 32}deg`);
+      scene.style.setProperty('--scene-depth', `${p * 100}px`);
+    }
+    if (stack) {
+      const rect = stack.getBoundingClientRect();
+      const p = still ? 0 : Math.max(0, Math.min(1, (innerHeight - rect.top) / (innerHeight + rect.height)));
+      stack.style.setProperty('--spread', `${p * 90}px`);
+      stack.style.setProperty('--stack-turn', `${-18 + p * 36}deg`);
+    }
+  };
+  const queueDepth = () => {
+    if (framePending || (!scene && !stack)) return;
     framePending = true;
-    requestAnimationFrame(() => {
-      scene.style.setProperty('--scene-turn', `${Math.min(scrollY, 800) * .025}deg`);
-      scene.style.setProperty('--scene-y', `${Math.min(scrollY, 800) * .035}px`);
-      framePending = false;
-    });
-  }, {passive:true});
+    requestAnimationFrame(paintDepth);
+  };
+  addEventListener('scroll', queueDepth, {passive:true});
+  addEventListener('resize', queueDepth, {passive:true});
+  addEventListener('pageshow', queueDepth);
+  reduced.addEventListener('change', queueDepth);
+  controls.forEach(button => button.addEventListener('click', queueDepth));
+  queueDepth();
   document.querySelectorAll('[data-request-builder]').forEach(section => {
     const form = section.querySelector('form');
     const brief = section.querySelector('textarea');
