@@ -60,7 +60,7 @@ def test_disabled_no_schema_or_network(tmp_path,monkeypatch):
  with TestClient(app) as c:
   assert not c.get('/api/commerce/status').json()['payments_enabled']
   assert c.get('/api/commerce/products').json()['items']==[]
-  assert 'sales are not activated' in c.get('/shop/payments').text
+  assert 'Checkout is not open yet' in c.get('/shop/payments').text
   assert 'prove control without a payment' in c.get('/shop/payments/receiver').text
   _,_,h=register(c);assert c.get('/api/commerce/orders/missing/download',headers=h).status_code==503
  assert not ap.inspect(app.state.engine).has_table('sales_orders');app.state.engine.dispose()
@@ -161,7 +161,11 @@ def test_disabled_receiver_configuration_visible_without_secrets(tmp_path,monkey
   assert d['configured_recipient']==RECIPIENT and not d['payments_enabled']
   assert d['activation_checks']['recipient_authority_recorded']
   assert 'must-not-be-returned' not in r.text
-  assert 'A receiving address has been selected' in c.get('/shop/payments').text
+  page=c.get('/shop/payments').text
+  assert 'Checkout is not open yet' in page
+  assert 'Agent checkout unavailable' in page and 'disabled' in page
+  assert 'Browser wallet checkout isn’t available yet.' in page
+  assert RECIPIENT in page
  app.state.engine.dispose()
 
 
