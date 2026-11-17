@@ -163,3 +163,18 @@ def test_disabled_receiver_configuration_visible_without_secrets(tmp_path,monkey
   assert 'must-not-be-returned' not in r.text
   assert 'A receiving address has been selected' in c.get('/shop/payments').text
  app.state.engine.dispose()
+
+
+def test_agent_purchase_handoff_binds_exact_edition(setup):
+ c,h,provider,_=setup
+ page=c.get('/shop/payments').text
+ assert 'Test purchases only' in page
+ assert 'synthetic-v1' in page and HASH in page and ap.sha(TERMS.encode()) in page
+ assert 'X-Sanctum-Wallet-Proof' in page and 'PAYMENT-SIGNATURE' in page
+ assert not provider.calls
+ # The rendered identity and terms create an order for this exact edition;
+ # altering terms must fail before any payment provider interaction.
+ assert c.post('/api/commerce/orders',headers=h,json={'client_id':'handoff-wrong-terms','product_id':'synthetic-v1','payer':WALLET.address,'terms_hash':'0'*64}).status_code==409
+ order=create(setup,'handoff-valid-order')
+ assert order['sha256']==HASH and order['recipient']==RECIPIENT
+ assert not provider.calls

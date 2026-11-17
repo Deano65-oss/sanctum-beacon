@@ -196,7 +196,7 @@ def install(app, engine, auth, quota, require_open, templates, config=None, faci
 
     @app.get('/shop/payments', include_in_schema=False)
     def page(request: Request):
-        return templates.TemplateResponse(request=request, name='payments.html', context={'payment_status': status()})
+        return templates.TemplateResponse(request=request, name='payments.html', context={'payment_status': status(), 'payable_products': catalogue()['items']})
 
     @app.get('/shop/payments/receiver', include_in_schema=False)
     def receiver_page(request: Request):
