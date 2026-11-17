@@ -24,6 +24,7 @@ from . import sales_terms
 from .x402_provider import NETWORKS, CdpFacilitator, PayAIFacilitator, BaseReceiptReader, encode_header, decode_header, validate_payload
 
 MONTHLY_SETTLEMENT_CAP = 100
+PILOT_ORDER_ID = str(uuid.uuid5(uuid.NAMESPACE_URL, "https://sanctum-beacon.onrender.com/closed-first-payment-pilot"))
 
 def sha(value):
     return hashlib.sha256(value).hexdigest()
@@ -41,6 +42,13 @@ class Configuration:
     provider: str = 'cdp'
     seller_email: str = ''
     seller_address: str = ''
+    pilot_authority: str = ''
+    pilot_buyer: str = ''
+    pilot_product: str = ''
+    pilot_amount: str = ''
+    pilot_artifact: str = ''
+    pilot_terms: str = ''
+    pilot_payer: str = ''
 
     @classmethod
     def environment(cls):
@@ -49,7 +57,11 @@ class Configuration:
             ('SANCTUM_X402_SELLER', ''), ('SANCTUM_X402_AUTHORITY', ''),
             ('SANCTUM_CDP_API_KEY_ID', ''), ('SANCTUM_CDP_API_KEY_SECRET', ''),
             ('SANCTUM_X402_ACTIVATION_RECEIPT', ''), ('SANCTUM_X402_PROVIDER', 'cdp'),
-            ('SANCTUM_SALES_CONTACT_EMAIL', ''), ('SANCTUM_SALES_SERVICE_ADDRESS', '')]])
+            ('SANCTUM_SALES_CONTACT_EMAIL', ''), ('SANCTUM_SALES_SERVICE_ADDRESS', ''),
+            ('SANCTUM_X402_PILOT_AUTHORITY', ''), ('SANCTUM_X402_PILOT_BUYER', ''),
+            ('SANCTUM_X402_PILOT_PRODUCT', ''), ('SANCTUM_X402_PILOT_AMOUNT', ''),
+            ('SANCTUM_X402_PILOT_ARTIFACT_SHA256', ''), ('SANCTUM_X402_PILOT_TERMS_SHA256', ''),
+            ('SANCTUM_X402_PILOT_PAYER', '')]])
 
     def provider_configured(self):
         return self.provider == 'payai' or (self.provider == 'cdp' and bool(self.key_id and self.key_secret))
@@ -57,6 +69,19 @@ class Configuration:
     def seller_configured(self):
         return bool(self.seller and re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+', self.seller_email)
                     and self.seller_address.strip())
+
+    def pilot_configured(self):
+        return bool(self.mode == 'live' and not self.activation_receipt
+            and self.provider == 'payai' and self.pilot_authority and self.authority
+            and self.seller_configured()
+            and re.fullmatch(r'0x[0-9a-fA-F]{40}', self.recipient) and int(self.recipient, 16)
+            and re.fullmatch(r'[0-9a-f]{64}', self.pilot_buyer)
+            and re.fullmatch(r'[a-z0-9-]{3,64}', self.pilot_product)
+            and re.fullmatch(r'[0-9]{1,9}', self.pilot_amount)
+            and 10000 <= int(self.pilot_amount) <= 100000000
+            and re.fullmatch(r'[0-9a-f]{64}', self.pilot_artifact)
+            and re.fullmatch(r'[0-9a-f]{64}', self.pilot_terms)
+            and re.fullmatch(r'0x[0-9a-fA-F]{40}', self.pilot_payer) and int(self.pilot_payer, 16))
 
     def configured(self):
         return bool(self.mode in NETWORKS and re.fullmatch(r'0x[0-9a-fA-F]{40}', self.recipient)
@@ -97,11 +122,17 @@ def install(app, engine, auth, quota, require_open, templates, config=None, faci
     def general_terms():
         return sales_terms.text(cfg.seller, cfg.seller_email, cfg.seller_address)
     def ready():
-        return cfg.configured() and all(inspect(engine).has_table(t.name) for t in (products, orders, budgets))
+        return (cfg.configured() or cfg.pilot_configured()) and all(inspect(engine).has_table(t.name) for t in (products, orders, budgets))
 
-    def enabled():
+    def enabled(actor=None, publisher=False):
         if not ready():
             raise HTTPException(503, 'Sales payments are not activated. Do not send funds.', headers={'Retry-After': '3600'})
+        if cfg.pilot_configured() and not publisher and (not actor or actor['id'] != cfg.pilot_buyer):
+            raise HTTPException(403, 'Closed pilot: approved buyer only')
+
+    def pilot_product_matches(p):
+        return (p['id'] == cfg.pilot_product and p['amount'] == int(cfg.pilot_amount)
+            and p['sha256'] == cfg.pilot_artifact and sha(p['terms'].encode()) == cfg.pilot_terms)
 
     def member(c, actor):
         require_open(c)
@@ -114,6 +145,8 @@ def install(app, engine, auth, quota, require_open, templates, config=None, faci
         row = c.execute(select(orders).where(orders.c.id == oid, orders.c.buyer_id == actor['id'])).mappings().first()
         if not row:
             raise HTTPException(404, 'Order not found')
+        if cfg.pilot_configured() and (row['id'] != PILOT_ORDER_ID or row['recipient'] != cfg.recipient or row['network'] != NETWORKS['live'][0] or row['token'] != NETWORKS['live'][1] or row['product_id'] != cfg.pilot_product or row['amount'] != int(cfg.pilot_amount) or row['sha256'] != cfg.pilot_artifact or row['terms_hash'] != cfg.pilot_terms or row['payer'] != cfg.pilot_payer.lower()):
+            raise HTTPException(409, 'Order differs from authorised pilot')
         return dict(row)
 
     def artifact(c, order):
@@ -145,8 +178,9 @@ def install(app, engine, auth, quota, require_open, templates, config=None, faci
     @app.get('/api/commerce/status')
     def status():
         active = ready()
-        return {'protocol': 'x402', 'version': 2, 'mode': cfg.mode if active else 'disabled',
-            'payments_enabled': active, 'live_payments_enabled': active and cfg.mode == 'live',
+        return {'protocol': 'x402', 'version': 2, 'mode': ('pilot' if cfg.pilot_configured() else cfg.mode) if active else 'disabled',
+            'payments_enabled': active and not cfg.pilot_configured(), 'pilot_enabled': active and cfg.pilot_configured(),
+            'live_payments_enabled': active and cfg.mode == 'live' and not cfg.pilot_configured(),
             'network': NETWORKS[cfg.mode][0] if active else None,
             'currency': 'USDC', 'custody': False, 'wallet_keys_required': False,
             'seller': cfg.seller if active else None, 'monthly_settlement_attempt_cap': MONTHLY_SETTLEMENT_CAP,
@@ -158,19 +192,19 @@ def install(app, engine, auth, quota, require_open, templates, config=None, faci
                 'facilitator_credentials_required': cfg.provider == 'cdp',
                 'facilitator_credentials_configured': bool(cfg.key_id and cfg.key_secret),
                 'live_validation_recorded': bool(cfg.activation_receipt)},
-            'setup_status': 'active' if active else ('awaiting_seller_details_and_validation' if cfg.recipient and cfg.authority else 'awaiting_receiver'),
+            'setup_status': ('closed_pilot' if cfg.pilot_configured() else 'active') if active else ('awaiting_seller_details_and_validation' if cfg.recipient and cfg.authority else 'awaiting_receiver'),
             'guide': '/shop/payments', 'terms_url': '/shop/payments/terms', 'support_treasury_is_separate': True}
 
     @app.get('/shop/payments/terms', include_in_schema=False)
     def terms_page(request: Request):
         return templates.TemplateResponse(request=request, name='sales_terms.html', context={
-            'terms': general_terms(), 'terms_ready': cfg.seller_configured(), 'payments_enabled': ready()})
+            'terms': general_terms(), 'terms_ready': cfg.seller_configured(), 'payments_enabled': ready() and not cfg.pilot_configured()})
 
     @app.get('/api/commerce/terms')
     def terms_document():
         body = general_terms()
         return {'version': sales_terms.VERSION, 'text': body, 'sha256': sha(body.encode()),
-                'seller_details_complete': cfg.seller_configured(), 'payments_enabled': ready()}
+                'seller_details_complete': cfg.seller_configured(), 'payments_enabled': ready() and not cfg.pilot_configured()}
 
     @app.post('/api/commerce/preflight')
     def preflight(actor=Depends(auth)):
@@ -204,7 +238,7 @@ def install(app, engine, auth, quota, require_open, templates, config=None, faci
 
     @app.get('/api/commerce/products')
     def catalogue():
-        if not ready():
+        if not ready() or cfg.pilot_configured():
             return {'items': [], 'payments_enabled': False}
         with engine.connect() as c:
             rows = c.execute(select(products).where(products.c.status == 'listed')).mappings()
@@ -214,8 +248,10 @@ def install(app, engine, auth, quota, require_open, templates, config=None, faci
 
     @app.post('/api/commerce/products', status_code=201)
     def publish(body: NewProduct, actor=Depends(auth)):
-        enabled()
+        enabled(actor, publisher=True)
         contract_terms = (general_terms() + '\nProduct-specific terms:\n' + body.terms) if cfg.mode == 'live' else body.terms
+        if cfg.pilot_configured() and not pilot_product_matches({'id': body.id, 'amount': body.amount_micro_usdc, 'sha256': body.sha256, 'terms': contract_terms}):
+            raise HTTPException(409, 'Product differs from authorised pilot edition')
         try:
             content = base64.b64decode(body.content_base64, validate=True)
         except ValueError:
@@ -241,11 +277,13 @@ def install(app, engine, auth, quota, require_open, templates, config=None, faci
 
     @app.post('/api/commerce/orders', status_code=201)
     def create(body: NewOrder, actor=Depends(auth)):
-        enabled()
+        enabled(actor)
         with engine.begin() as c:
             member(c, actor)
             existing = c.execute(select(orders).where(orders.c.buyer_id == actor['id'], orders.c.client_id == body.client_id)).mappings().first()
             if existing:
+                if cfg.pilot_configured() and (existing['id'] != PILOT_ORDER_ID or existing['recipient'] != cfg.recipient or existing['network'] != NETWORKS['live'][0] or existing['token'] != NETWORKS['live'][1] or not pilot_product_matches({'id': existing['product_id'], 'amount': existing['amount'], 'sha256': existing['sha256'], 'terms': artifact(c, existing)['terms']}) or existing['payer'] != cfg.pilot_payer.lower()):
+                    raise HTTPException(409, 'Existing order differs from authorised pilot')
                 if (existing['product_id'], existing['payer'], existing['terms_hash']) != (body.product_id, body.payer.lower(), body.terms_hash):
                     raise HTTPException(409, 'Idempotency key already used for another request')
                 return view(existing) | {'terms': artifact(c, existing)['terms']}
@@ -257,10 +295,22 @@ def install(app, engine, auth, quota, require_open, templates, config=None, faci
                 raise HTTPException(404, 'Product unavailable')
             if cfg.mode == 'live' and not p['terms'].startswith(general_terms() + '\nProduct-specific terms:\n'):
                 raise HTTPException(409, 'Seller terms changed; a new product version is required')
+            if cfg.pilot_configured() and (not pilot_product_matches(p) or body.payer.lower() != cfg.pilot_payer.lower()):
+                raise HTTPException(409, 'Order differs from authorised pilot')
             if sha(p['terms'].encode()) != body.terms_hash or int(body.payer, 16) == 0:
                 raise HTTPException(409, 'Current terms and a valid payer are required')
+            if cfg.pilot_configured():
+                # A singleton INSERT serializes concurrent attempts on both SQLite
+                # and PostgreSQL. It rolls back with this transaction on failure.
+                if engine.dialect.name == 'postgresql':
+                    from sqlalchemy.dialects.postgresql import insert as pilot_insert
+                else:
+                    from sqlalchemy.dialects.sqlite import insert as pilot_insert
+                reserved = c.execute(pilot_insert(budgets).values(month='pilot', attempts=1).on_conflict_do_nothing(index_elements=['month']))
+                if reserved.rowcount != 1:
+                    raise HTTPException(409, 'Single pilot order already reserved; do not create another')
             network, token, _ = NETWORKS[cfg.mode]
-            order = {'id': str(uuid.uuid4()), 'buyer_id': actor['id'], 'client_id': body.client_id,
+            order = {'id': PILOT_ORDER_ID if cfg.pilot_configured() else str(uuid.uuid4()), 'buyer_id': actor['id'], 'client_id': body.client_id,
                 'product_id': p['id'], 'sha256': p['sha256'], 'amount': p['amount'],
                 'terms_hash': body.terms_hash, 'payer': body.payer.lower(), 'recipient': cfg.recipient,
                 'network': network, 'token': token, 'created_at': int(time.time()),
@@ -271,7 +321,7 @@ def install(app, engine, auth, quota, require_open, templates, config=None, faci
 
     @app.get('/api/commerce/orders/{oid}')
     def read(oid: str, actor=Depends(auth)):
-        enabled()
+        enabled(actor)
         with engine.connect() as c:
             order = order_for(c, oid, actor)
             return view(order) | {'terms': artifact(c, order)['terms']}
@@ -300,7 +350,7 @@ def install(app, engine, auth, quota, require_open, templates, config=None, faci
 
     @app.post('/api/commerce/orders/{oid}/reconcile')
     def reconcile(oid: str, body: Reconcile, actor=Depends(auth)):
-        enabled()
+        enabled(actor)
         with engine.begin() as c:
             order_for(c, oid, actor); quota(c, 'sales:reconcile:' + actor['id'], 20)
         reconciled = reconcile_tx(oid, actor, body.transaction)
@@ -308,7 +358,7 @@ def install(app, engine, auth, quota, require_open, templates, config=None, faci
 
     @app.get('/api/commerce/orders/{oid}/download')
     def download(oid: str, request: Request, actor=Depends(auth)):
-        enabled()
+        enabled(actor)
         with engine.begin() as c:
             member(c, actor); quota(c, 'sales:downloads:' + actor['id'], 30)
             order = order_for(c, oid, actor); p = artifact(c, order)
@@ -398,7 +448,7 @@ def install(app, engine, auth, quota, require_open, templates, config=None, faci
 
     @app.post('/api/commerce/orders/{oid}/accept')
     def accept(oid: str, actor=Depends(auth)):
-        enabled()
+        enabled(actor)
         with engine.begin() as c:
             order = order_for(c, oid, actor)
             if order['status'] != 'paid' or not order['delivered_at']:
