@@ -1,0 +1,29 @@
+.alpine-journey.v2-bleed { padding: 0; height: 145svh; background: #12212d; }
+.alpine-frame { position: sticky; top: 0; height: 91svh; min-height: 480px; display: grid; align-items: end; overflow: hidden; isolation: isolate; color: white; }
+.alpine-world, .alpine-world::after { position: absolute; inset: 0; }
+.alpine-world { z-index: -1; --camera: 0; }
+.alpine-lake { width: 100%; height: 100%; object-fit: cover; object-position: 65% 57%; transform-origin: 72% 58%; transform: scale(calc(1 + var(--camera) * .15)); }
+.alpine-pine { position: absolute; left: -9%; bottom: -9%; width: 45%; height: auto; transform-origin: bottom left; transform: translate3d(calc(var(--camera) * -22%),calc(var(--camera) * 9%),0) scale(calc(1 + var(--camera) * .24)); }
+.alpine-world::after { content: ""; background: linear-gradient(0deg,rgba(5,13,21,.8),transparent 66%),linear-gradient(90deg,rgba(7,16,25,.42),transparent 68%); }
+.alpine-copy { width: min(100%,1440px); margin: 0 auto; padding: clamp(24px,5vw,80px); box-sizing: border-box; }
+.alpine-copy h1 { margin: 0; font: 600 clamp(52px,7.2vw,118px)/.96 var(--sans, sans-serif); color: white; letter-spacing: -.065em; }
+.alpine-copy p { color: white; margin: 20px 0; font-size: clamp(17px,1.5vw,24px); }
+.alpine-copy .v2-actions { justify-content: flex-start; }
+.alpine-copy .v2-button { background: #f7f8f4; color: #10222c; }
+.alpine-copy .v2-link { color: white; }
+.alpine-orbit.v2-hero { padding: 0; background: transparent; }
+@media (max-width: 760px) {
+  .alpine-frame { height: 83svh; min-height: 450px; }
+  .alpine-copy { padding: 28px 24px 38px; }
+  .alpine-lake { object-position: 68% center; }
+  .alpine-pine { width: 69%; }
+}
+@media (prefers-reduced-motion: reduce), (max-height: 510px) {
+  .alpine-journey.v2-bleed { height: auto; }
+  .alpine-frame { position: relative; }
+  .alpine-world img { transform: none; }
+}
+.motion-paused .alpine-journey { height: auto; }
+.motion-paused .alpine-frame { position: relative; }
+.motion-paused .alpine-world img { transform: none; }
+.alpine-pine { mask-image: linear-gradient(to right, black 0 72%, transparent 100%); }

@@ -54,11 +54,19 @@
   });
   // Scroll-linked CSS 3D: one frame per event, no render loop or dependency.
   const scene = document.querySelector('[data-orbit-scene]');
+  const landscape = document.querySelector('[data-alpine-world]');
   const stack = document.querySelector('[data-scroll-stack]');
   let framePending = false;
   const paintDepth = () => {
     framePending = false;
     const still = paused || reduced.matches;
+    if (landscape) {
+      const frame = landscape.parentElement;
+      const journey = frame.parentElement;
+      const distance = Math.max(1, journey.offsetHeight - frame.offsetHeight);
+      const progress = still ? 0 : Math.max(0, Math.min(1, -journey.getBoundingClientRect().top / distance));
+      landscape.style.setProperty('--camera', String(progress));
+    }
     if (scene) {
       const hero = scene.closest('.v2-hero');
       const rect = hero.getBoundingClientRect();
@@ -76,7 +84,7 @@
     }
   };
   const queueDepth = () => {
-    if (framePending || (!scene && !stack)) return;
+    if (framePending || (!scene && !stack && !landscape)) return;
     framePending = true;
     requestAnimationFrame(paintDepth);
   };
